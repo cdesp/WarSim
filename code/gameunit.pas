@@ -20,17 +20,20 @@ interface
 
 uses Classes, Contnrs,
   CastleTransform, CastleComponentSerialize, CastleVectors, CastleScene,
-  CastleTiledMap;
+  CastleTiledMap,System.Generics.Collections;
 
 type
-  TUnitKind = (ukAlienLight, ukAlienHeavy, ukHumanLight, ukHumanHeavy);
+  TUnitKind = (ukAlienLight, ukAlienHeavy, ukHoplites, ukArchers, ukKnights);
 
   TUnit = class;
+  TUnitList = TObjectList<TUnit>;
+  TGroupList = TObjectList<TUnitList>;
 
   TUnitsOnMap = class(TComponent)
   private
-    FItems: array of array of TUnit;
+    FItems: array of array of TUnitList;
     FUnits: TComponentList;
+    FGroupList:TGroupList;
   strict private
     FMap: TCastleTiledMap;
     FUnitsCount: Integer;
@@ -53,22 +56,33 @@ type
     property Items[const TilePosition: TVector2Integer]: TUnit read GetUnitOnMap; default;
 
     function UnitsCount: Integer;
+    function UnitsOnTile(const TilePosition: TVector2Integer):TUnitList;
+    function NewGroup:TUnitList;
+    procedure DeleteGroup(group:TUnitList);
     property Units[const Index: Integer]: TUnit read GetUnits;
-
     property Map: TCastleTiledMap read FMap;
-
+    property GroupList:TGroupList read FGroupList;
     function IsWater(const TilePosition: TVector2Integer): Boolean;
   end;
 
   TUnit = class(TComponent)
   private
     class var
-      TransformTemplate: TSerializedComponent;
+      TransformTemplate: TCastleComponentFactory;
+    procedure SetMovingPath(const Value: TList);
+    function getFacingToTarget: Integer;
+    procedure checkValidTile;
+    function IsInGroup: Boolean;
+    procedure SetGroupIndex(const Value: Integer);
+    function getGroup: TUnitList;
+    procedure setSelected(const Value: Boolean);
   var
       FSecondsPassed: Single;
       FSpeed: Integer;
       FTargetTile: TVector2Integer;
       FUnitFacing: Integer;
+      FUnitFacingSave: Integer;
+      FGroupIndex: Integer;
       procedure SetSecondsPassed(const Value: Single);
       procedure SetSpeed(const Value: Integer);
       procedure SetTargetTile(const Value: TVector2Integer);
@@ -83,8 +97,11 @@ type
       TextLife: TCastleText;
       TextMovement: TCastleText;
       Background: TCastleImageTransform;
+      SelBox: TCastleBox;
       FTilePosition: TVector2Integer;
       FUnitsOnMap: TUnitsOnMap;
+      FMovingPath : TList;
+      FSelected: Boolean;
     procedure SetTilePosition(const Value: TVector2Integer);
     procedure SetUnitsOnMap(const Value: TUnitsOnMap);
     procedure PlaceOnMap;
@@ -97,6 +114,7 @@ type
   public
     Transform: TCastleTransform;
     FaceRotation: TVector4;
+
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure Initialize(const AUnitsOnMap: TUnitsOnMap;
@@ -111,6 +129,8 @@ type
       Returns @true if the tile is empty and possible to walk into (not water),
       or occupied by the enemy (in which case we do attack).}
     function CanMove(const NewTilePosition: TVector2Integer): Boolean;
+    procedure PathReached;
+    procedure ClearGroup;
 
     property Kind: TUnitKind read FKind;
     property Attack: Integer read FAttack;
@@ -119,31 +139,45 @@ type
       removing it also from the map. }
     property Life: Integer read FLife write SetLife;
     property Movement: Integer read FMovement write SetMovement;
-      property SecondsPassed: Single read FSecondsPassed write SetSecondsPassed;
-      property Speed: Integer read FSpeed write SetSpeed;
-      property TargetTile: TVector2Integer read FTargetTile write SetTargetTile;
+    property SecondsPassed: Single read FSecondsPassed write SetSecondsPassed;
+    property Speed: Integer read FSpeed write SetSpeed;
+    property TargetTile: TVector2Integer read FTargetTile write SetTargetTile;
     property TilePosition: TVector2Integer read FTilePosition write SetTilePosition;
     property UnitFacing: Integer read FUnitFacing write SetUnitFacing;
+    property MovingPath:TList read FMovingPath write SetMovingPath;
+    property GroupIndex:Integer read FGroupIndex write SetGroupIndex;
+    property InGroup:Boolean read IsInGroup;
+    property Group:TUnitList read getGroup;
+    property Selected:Boolean read FSelected write setSelected;
   end;
 
 const
-  ZUnit = 100.0;
+  ZUnit = 300.0;
   ZHover = 200.0;
 
 implementation
 
-uses SysUtils, TypInfo, Math,
-  CastleRectangles, CastleStringUtils, CastleColors, CastleViewport;
+uses SysUtils, TypInfo, Math, windows,GameViewPlay, System.Types,
+  CastleRectangles, CastleStringUtils, CastleColors, CastleViewport, pathfinderunit;
 
 { TUnitsOnMap ---------------------------------------------------------------- }
 
 constructor TUnitsOnMap.Create(const AOwner: TComponent;
   const AMap: TCastleTiledMap);
+var i,j : integer;
 begin
   inherited Create(AOwner);
   FMap := AMap;
   SetLength(FItems, Map.Data.Width, Map.Data.Height);
+  for i := 0 to Map.Data.Width-1 do
+    for j := 0 to Map.Data.Height-1 do
+       FItems[i,j]:= TUnitlist.Create(False);
   FUnits := TComponentList.Create(false);
+end;
+
+procedure TUnitsOnMap.DeleteGroup(group: TUnitList);
+begin
+  GroupList.Remove(group);
 end;
 
 destructor TUnitsOnMap.Destroy;
@@ -154,7 +188,10 @@ end;
 
 function TUnitsOnMap.GetUnitOnMap(const TilePosition: TVector2Integer): TUnit;
 begin
-  Result := FItems[TilePosition.X, TilePosition.Y];
+  if FItems[TilePosition.X, TilePosition.Y].Count>0 then
+    Result := FItems[TilePosition.X, TilePosition.Y].Items[0] //return by default the first object
+  else
+   Result := nil;
 end;
 
 function TUnitsOnMap.UnitsCount: Integer;
@@ -165,6 +202,12 @@ end;
 function TUnitsOnMap.GetUnits(const Index: Integer): TUnit;
 begin
   Result := FUnits[Index] as TUnit;
+end;
+
+function TUnitsOnMap.UnitsOnTile(
+  const TilePosition: TVector2Integer): TUnitList;
+begin
+   Result := FItems[TilePosition.X, TilePosition.Y];
 end;
 
 procedure TUnitsOnMap.SetUnitsCount(const AValue: Integer);
@@ -179,6 +222,10 @@ var
   Frame: Integer;
   HorizontalFlip, VerticalFlip, DiagonalFlip: Boolean;
 begin
+  if (TilePosition.X<0) Or (TilePosition.X>=map.Data.Width)  or
+    (TilePosition.Y<0) Or (TilePosition.Y>=map.Data.Height) then
+     exit(true);
+
   Result := Map.Data.TileRenderData(TilePosition,
     Map.Data.Layers[0],
     Tileset, Frame, HorizontalFlip, VerticalFlip, DiagonalFlip) and
@@ -189,13 +236,24 @@ begin
 //    ((Frame mod 4) = 1);
 end;
 
+function TUnitsOnMap.NewGroup: TUnitList;
+begin
+  Result:=TunitList.Create;
+  GroupList.Add(Result);
+end;
+
 { TUnit ----------------------------------------------------------------------- }
+
+procedure TUnit.ClearGroup;
+begin
+  FGroupIndex:=-1;
+end;
 
 constructor TUnit.Create(AOwner: TComponent);
 begin
   inherited;
   if TransformTemplate = nil then
-    TransformTemplate := TSerializedComponent.Create('castle-data:/unit.castle-transform');
+    TransformTemplate := TCastleComponentFactory.Create('castle-data:/unit.castle-transform');
   Transform := TransformTemplate.TransformLoad(Self);
 
   Background := FindRequiredComponent('Background') as TCastleImageTransform;
@@ -203,6 +261,7 @@ begin
   TextAttack := FindRequiredComponent('TextAttack') as TCastleText;
   TextLife := FindRequiredComponent('TextLife') as TCastleText;
   TextMovement := FindRequiredComponent('TextMovement') as TCastleText;
+  SelBox := FindRequiredComponent('SelBox') as TCastleBox;
 
   UnitFacing:=0;
 end;
@@ -215,7 +274,8 @@ const
   ( 'castle-data:/units/alien1.png',
     'castle-data:/units/alien2.png',
     'castle-data:/units/human1.png',
-    'castle-data:/units/human2.png'
+    'castle-data:/units/human2.png',
+    'castle-data:/units/human3.png'
   );
 begin
   FKind := AKind;
@@ -228,9 +288,9 @@ begin
   ImageIcon.URL := UnitIconUrls[AKind];
   // change Background.Color (RGB, leave alpha as it was)
   if Human then
-    Background.Color := ColorOpacity(HexToColor('4CFF6B'), Background.Color.W)
+    Background.Color := ColorOpacity(HexToColor('FFFFFF'), Background.Color.W)
   else
-    Background.Color := ColorOpacity(HexToColor('FF664C'), Background.Color.W);
+    Background.Color := ColorOpacity(HexToColor('FFFF00'), Background.Color.W);
   TextAttack.Caption := IntToStr(Attack);
   TextLife.Caption := IntToStr(Life);
   TextMovement.Caption := IntToStr(Movement);
@@ -246,12 +306,17 @@ var
   Heavy: Boolean;
   AnAttack, ALife, AMovement: Integer;
 begin
-  Heavy := AKind in [ukAlienHeavy, ukHumanHeavy];
+  Heavy := AKind in [ukAlienHeavy, ukHoplites];
   AnAttack := IfThen(Heavy, 7, 3);
   ALife := IfThen(Heavy, 20, 10);
   AMovement := IfThen(Heavy, 2, 5);
   Speed:= IfThen(Heavy, 40, 60); //pixels per second 256 pixels to cross a hex
   Initialize(AUnitsOnMap, AKind, AnAttack, ALife, AMovement);
+end;
+
+function TUnit.IsInGroup: Boolean;
+begin
+   Result:= assigned(Group);
 end;
 
 destructor TUnit.Destroy;
@@ -279,20 +344,14 @@ const
 begin
   if UnitsOnMap <> nil then
   begin
-    UnitsOnMap.FItems[TilePosition.X, TilePosition.Y] := Self;
+    UnitsOnMap.FItems[TilePosition.X, TilePosition.Y].Add(Self);
     FTargetTile := TilePosition; //not moving
 
     R := UnitsOnMap.Map.TileRectangle(TilePosition);
     Transform.Translation := Vector3(R.Center, ZUnit);
-
-
     { The unit.castle-transform is designed for tile size = 256.
       Adjust it to match the actual tile size. }
     Scale := UnitScale * R.Height / UnitDesignedSize;
-    { In case of isometric map, the displayed units should be smaller,
-      otherwise it's too crowdy on the map. }
-    if UnitsOnMap.Map.Data.Orientation in [moIsometric, moIsometricStaggered] then
-      Scale := Scale * UnitScaleIsometric;
     Transform.Scale := Vector3(Scale, Scale, 1.0);
 
     Transform.Exists := true;
@@ -302,8 +361,8 @@ end;
 procedure TUnit.RemoveFromMap;
 begin
   if (UnitsOnMap <> nil) and
-     (UnitsOnMap.FItems[TilePosition.X, TilePosition.Y] = Self) then
-    UnitsOnMap.FItems[TilePosition.X, TilePosition.Y] := nil;
+     UnitsOnMap.FItems[TilePosition.X, TilePosition.Y].Contains(Self) then
+    UnitsOnMap.FItems[TilePosition.X, TilePosition.Y].Remove(Self);
 
   Transform.Exists := false;
 end;
@@ -327,7 +386,7 @@ end;
 
 function TUnit.Human: Boolean;
 begin
-  Result := FKind in [ukHumanLight, ukHumanHeavy];
+  Result := FKind in [ukHoplites, ukArchers, ukKnights];
 end;
 
 function TUnit.CanMove(const NewTilePosition: TVector2Integer): Boolean;
@@ -339,13 +398,9 @@ var
   UnitOnNewPosition: TUnit;
 begin
   Result :=
-    (UnitsOnMap <> nil) and
-    (Movement > 0) and
-    // can only move over neighbor tile, that is not water
-    (UnitsOnMap.Map.Data.TileNeighbor(
-      TilePosition, NewTilePosition, CornersAreNeighbors)) and
+    (UnitsOnMap <> nil)  and
     not UnitsOnMap.IsWater(NewTilePosition);
-
+  exit;
   // cannot move over a unit of the same side
   if Result then
   begin
@@ -375,6 +430,11 @@ begin
   end;
 end;
 
+procedure TUnit.SetGroupIndex(const Value: Integer);
+begin
+  FGroupIndex := Value;
+end;
+
 procedure TUnit.SetLife(const Value: Integer);
 begin
   if FLife <> Value then
@@ -396,9 +456,119 @@ begin
   end;
 end;
 
+
+function TUnit.getFacingToTarget:Integer;
+Begin
+   Result := TPathFinder.GetHexDirection(Tile(TilePosition.X,TilePosition.Y),Tile(TargetTile.X,TargetTile.Y));
+End;
+
+function TUnit.getGroup: TUnitList;
+begin
+  if (FGroupIndex>-1) and (FUnitsOnMap.GroupList.Count<FGroupIndex) then
+   Result:=FUnitsOnMap.GroupList[FGroupIndex]
+  else Result:=nil;
+end;
+
+
+//Check if the tile we are is valid meaning no other unit occupied it
+procedure TUnit.checkValidTile;
+var un: TUnit;
+    Newpos:TVector2Integer;
+
+    function findposnear(Pos:TVector2Integer;dist:integer):boolean;
+    Var AdjTiles: TTileArray;
+        i:Integer;
+    begin
+      if dist=3 then exit(False); //up to distance 3
+
+      AdjTiles:=TPathfinder.GetHexAdjTiles(Tile(Pos.X,pos.Y));
+      for i := 0 to High(AdjTiles) do
+      begin
+        if (FUnitsOnMap.UnitsOnTile(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y)).count=0) and
+            not FUnitsOnMap.isWater(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y))  then
+        begin
+          NewPos:=Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y);
+          Exit(True);
+        end;
+      end;
+      //here if no empty
+      for i := 0 to High(AdjTiles) do
+      begin
+        Result:= findposnear(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y),dist+1);
+        If Result then
+         break;
+      end;
+    end;
+
+    procedure MoveToNewPos;
+    Var pathf : TPathfinder;
+
+    Begin
+       pathf := TPathfinder.Create(TilePosition.X,TilePosition.Y, NewPos.X, NewPos.Y);
+       pathf.OnIsTilePassable := ViewPlay.IsTilePassable;
+       pathf.OnGetSpeed := ViewPlay.GetUnitSpeed;
+       MovingPath := pathf.FindPath;  //list of ttile Records
+       pathf.free;
+    End;
+
+begin
+   Newpos:=TVector2Integer.Zero;
+   if FUnitsonMap.UnitsOnTile(tileposition).Count=1 then exit;
+
+   //find a position near
+   for un in FUnitsonMap.UnitsOnTile(tileposition) do
+   begin
+     if un=self then
+     begin
+       if findposnear(TilePosition,1)  then
+          MoveToNewPos
+       else
+         OutputDebugString('Can not find empty position!!!');
+       break;
+     end;
+   end;
+end;
+
+procedure TUnit.PathReached;
+var tile:TTile;
+begin
+   if Assigned(MovingPath) and (MovingPath.Count>0) then //next tile on path
+   begin
+     tile:=PathfinderUnit.TTile(MovingPath.Items[MovingPath.Count-1]^);
+     TargetTile:= Vector2Integer(tile.X,tile.Y);
+     MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
+     UnitFacing := getFacingToTarget;
+   end
+   else
+    if Assigned(MovingPath) then  //Moving at path ended
+    begin
+      freeandnil(Movingpath);
+      UnitFacing:= FUnitFacingSave;  //restore facing
+      checkValidTile;
+    end;
+
+end;
+
+procedure TUnit.SetMovingPath(const Value: TList);
+begin
+  FMovingPath := Value;
+  if assigned(Value) then
+  begin
+    MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
+    FUnitFacingSave := UnitFacing; //save starting facing
+    PathReached;
+  end;
+end;
+
 procedure TUnit.SetSecondsPassed(const Value: Single);
 begin
   FSecondsPassed := Value;
+end;
+
+procedure TUnit.setSelected(const Value: Boolean);
+begin
+  FSelected := Value;
+  SelBox.Exists:=Value;
 end;
 
 procedure TUnit.SetSpeed(const Value: Integer);

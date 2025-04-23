@@ -76,7 +76,7 @@
                       "Name" : "ButtonInstructions",
                       "TranslationPersistent" : {
                         "$$ClassName" : "TCastleVector2Persistent",
-                        "X" : 2.2399998474121094E+002
+                        "X" : 2.2400000000000000E+002
                       },
                       "VerticalAnchorParent" : "vpMiddle",
                       "VerticalAnchorSelf" : "vpMiddle"
@@ -103,7 +103,7 @@
                       "Name" : "ButtonInstructions2",
                       "TranslationPersistent" : {
                         "$$ClassName" : "TCastleVector2Persistent",
-                        "X" : 4.7199996948242188E+002
+                        "X" : 4.7200000000000000E+002
                       },
                       "VerticalAnchorParent" : "vpMiddle",
                       "VerticalAnchorSelf" : "vpMiddle"
@@ -127,7 +127,7 @@
                   ],
                   "TranslationPersistent" : {
                     "$$ClassName" : "TCastleVector2Persistent",
-                    "Y" : -4.8499996185302734E+001
+                    "Y" : -4.8500000000000000E+001
                   },
                   "VerticalAnchorParent" : "vpTop",
                   "VerticalAnchorSelf" : "vpTop",
@@ -206,7 +206,9 @@
                         },
                         "TranslationPersistent" : {
                           "$$ClassName" : "TCastleVector3Persistent",
-                          "Z" : 5.0000000000000000E+002
+                          "X" : 1.0000000000000000E+002,
+                          "Y" : 1.0000000000000000E+002,
+                          "Z" : 1.0000000000000000E+002
                         }
                       },
                       {
@@ -288,7 +290,7 @@
                   "Spacing" : 1.0000000000000000E+001,
                   "TranslationPersistent" : {
                     "$$ClassName" : "TCastleVector2Persistent",
-                    "X" : 1.4020000000000000E+003
+                    "X" : 1.4020001220703125E+003
                   },
                   "VerticalAnchorParent" : "vpMiddle",
                   "VerticalAnchorSelf" : "vpMiddle",

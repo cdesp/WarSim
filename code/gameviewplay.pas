@@ -21,10 +21,33 @@ interface
 uses Classes,
   CastleControls, CastleTiledMap, CastleUIControls, CastleTransform,
   CastleVectors, CastleKeysMouse, CastleScene, CastleViewport,
-  GameUnit;
+  GameUnit, PathfinderUnit;
+
+Const MAXSPEED=50;  //Tile speed cost, lower means faster
+      DragThreshold = 5.0;
 
 type
+
+  TMoveResult = (mrNoMovementTooSmall, mrNoMovementAtTarget, mrMoved);
+
+
+type
+  TSelectionOverlay = class(TCastleUserInterface)
+  public
+    Dragging: Boolean;
+    DragStart, DragEnd: TVector2;
+    procedure Render; override;
+  end;
+
+
+
   TViewPlay = class(TCastleView)
+  private
+    SelectionOverlay :TSelectionOverlay ;
+    procedure DoPaintPath;
+    procedure ClearMapPath;
+    function TryMoveTowards(var PosS: TVector3; const PosT: TVector3; const S,
+      SecsPas: Single; out MovedDistance: Single): TMoveResult;
   published
     { Components designed using CGE editor.
       These fields will be automatically initialized at Start. }
@@ -47,15 +70,23 @@ type
     procedure ClickInstructions2(Sender: TObject);
     procedure ClickEndTurn(Sender: TObject);
     procedure UpdateTurnStatus;
+    procedure SelectUnitsInRect(const StartScreen, EndScreen: TVector2);
   public
     { Set this before starting this view. }
     MapName: String;
+    DrawPath: TList;
+    DrawAtTile: TVector2Integer;
     constructor Create(AOwner: TComponent); override;
     procedure Start; override;
     procedure Stop; override;
     procedure Update(const SecondsPassed: Single;
       var HandleInput: boolean); override;
     function Press(const Event: TInputPressRelease): Boolean; override;
+//    procedure Render; override;
+    function Release(const Event: TInputPressRelease):Boolean; override;
+    function Motion(const Event: TInputMotion):Boolean; override;
+    function IsTilePassable(X, Y: Integer): Boolean;
+    function getUnitSpeed(X, Y: Integer): Integer;
   end;
 
 var
@@ -63,16 +94,17 @@ var
 
 implementation
 
-uses SysUtils,
+uses SysUtils, windows,math,
   CastleComponentSerialize, CastleUtils, CastleRectangles, CastleColors,
   GameViewMainMenu, GameViewInstructions, GameViewInstructions2,
-  GameViewWin;
+  GameViewWin, CastleGLUtils, CastleRenderOptions, CastleCameras;
 
 constructor TViewPlay.Create(AOwner: TComponent);
 begin
   inherited;
   DesignUrl := 'castle-data:/gameviewplay.castle-user-interface';
 end;
+
 
 procedure TViewPlay.Start;
 
@@ -119,9 +151,12 @@ procedure TViewPlay.Start;
     for I := 0 to 3 do
       AddUnit(ukAlienLight, W div 8 + 2, W div 8 + 2, YBegin, YEnd);
     for I := 0 to 2 do
-      AddUnit(ukHumanHeavy, W - 1 - W div 8 - 0, W - 1 - W div 8 - 0, YBegin, YEnd);
+      AddUnit(ukHoplites, W - 1 - W div 8 - 0, W - 1 - W div 8 - 0, YBegin, YEnd);
     for I := 0 to 3 do
-      AddUnit(ukHumanLight, W - 1 - W div 8 - 2, W - 1 - W div 8 - 2, YBegin, YEnd);
+      AddUnit(ukArchers, W - 1 - W div 8 - 2, W - 1 - W div 8 - 2, YBegin, YEnd);
+    for I := 0 to 3 do
+      AddUnit(ukKnights, W - 1 - W div 8 - 3, W - 1 - W div 8 - 1, YBegin, YEnd);
+
   end;
 
 begin
@@ -153,6 +188,17 @@ begin
 
   HumanTurn := true;
   UpdateTurnStatus;
+
+
+  ViewportMap.camera.Translation:=UnitsOnMap.Units[9].Transform.Position-Vector3(1400,200,0);//Vector3(1200,500,100);
+  ViewportMap.camera.Orthographic.Height:=1500;
+
+  (Viewplay.ViewportMap.Navigation as TCastle2DNavigation).MouseButtonMove:=buttonRight;
+  SelectionOverlay := TSelectionOverlay.Create(FreeAtStop);
+  SelectionOverlay.FullSize := true;
+  SelectionOverlay.Exists:=true;
+  InsertFront(SelectionOverlay); // ensure it draws on top
+
 end;
 
 procedure TViewPlay.Stop;
@@ -200,6 +246,10 @@ begin
   UpdateTurnStatus;
 end;
 
+var
+  UnitUnderMouse: TUnit;
+
+
 function TViewPlay.Press(const Event: TInputPressRelease): Boolean;
 
   procedure CheckWin;
@@ -229,14 +279,20 @@ function TViewPlay.Press(const Event: TInputPressRelease): Boolean;
     SelectedUnitVisualization.Rotation := SelectedUnit.FaceRotation;
   end;
 
-var
-  UnitUnderMouse: TUnit;
 begin
   Result := inherited;
   if Result then Exit;
+  if SelectionOverlay.Dragging then
+  begin
+     exit;
+  end;
+
 
   if Event.IsMouseButton(buttonLeft) and TileUnderMouseExists then
   begin
+     //SelectionOverlay.Dragging := True;
+    SelectionOverlay.DragStart := Event.Position;
+    SelectionOverlay.DragEnd := SelectionOverlay.DragStart;
     UnitUnderMouse := UnitsOnMap[TileUnderMouse];
     if (UnitUnderMouse <> nil) and (UnitUnderMouse.Human = HumanTurn) then
     begin
@@ -268,9 +324,13 @@ begin
       begin
         // move
         //SelectedUnit.TilePosition := TileUnderMouse;
-        SelectedUnit.TargetTile := TileUnderMouse; //Start Moving
-        SelectedUnit.Movement := SelectedUnit.Movement - 1;
+        //SelectedUnit.TargetTile := TileUnderMouse; //Start Moving
+        SelectedUnit.MovingPath := DrawPath;
+        //SelectedUnit.Movement := SelectedUnit.Movement - 1;
         UpdateTurnStatus; // SelectedUnit stats changed
+        SelectedUnit:=nil;
+        SelectedUnitVisualization.Exists := false;
+        ClearMapPath;
       end;
       Exit(true); // event handled
     end;
@@ -278,8 +338,88 @@ begin
     { When clicking on other map tile, do not mark event as handled
       by Exit(true) here.
       This allows TCastle2DNavigation to handle clicks to pan the map. }
+  end
+  else if Event.IsMouseButton(buttonRight) then
+  begin
+    SelectedUnit:=nil;
+    SelectedUnitVisualization.Exists := false;
+    ClearMapPath;
+    //Result:=true;
   end;
 end;
+
+function TViewPlay.Release(const Event: TInputPressRelease):boolean;
+begin
+  Result:=inherited;
+  if Event.IsMouseButton(buttonLeft) and SelectionOverlay.Dragging then
+  begin
+    SelectionOverlay.Dragging := False;
+    SelectionOverlay.DragEnd := Event.Position;
+
+  // Now perform unit selection
+    SelectUnitsInRect(SelectionOverlay.DragStart, SelectionOverlay.DragEnd);
+    Result:=true;
+  end;
+end;
+
+function TViewPlay.Motion(const Event: TInputMotion):boolean;
+var
+  DragDistance: Single;
+begin
+  Result:=Inherited;
+
+  if buttonLeft in Event.Pressed then
+  begin
+    DragDistance := (Event.Position - SelectionOverlay.DragStart).Length;
+
+    if  (DragDistance > DragThreshold) then
+    begin
+      // Start selection
+      SelectionOverlay.Dragging := true;
+    end;
+    if SelectionOverlay.Dragging then
+    begin
+      if not TVector2.Equals(SelectionOverlay.DragEnd,Event.Position) then
+      begin //
+        //Deselect all units
+        SelectUnitsInRect(SelectionOverlay.DragStart,Event.Position);
+      end;
+      SelectionOverlay.DragEnd := Event.Position;
+      Result:=True;
+    end;
+  end;
+end;
+
+
+procedure TViewPlay.SelectUnitsInRect(const StartScreen, EndScreen: TVector2);
+var
+  SelectionRect: TFloatRectangle;
+  UnitWorldPos, UnitLocalPos : TVector3;
+  UnitContainerPos:TVector2;
+  myUnit: TUnit; // your custom unit class
+  i:integer;
+begin
+  SelectionRect := FloatRectangle(StartScreen, EndScreen.X-StartScreen.X, EndScreen.Y-StartScreen.X);
+
+  for i:=0 to UnitsOnMap.UnitsCount-1 do
+  begin
+    myUnit := UnitsOnMap.Units[i];
+    UnitWorldPos := myUnit.Transform.Translation; // or Unit.TileToWorld(...) if needed
+    // Convert world position to camera's local coordinates
+    UnitLocalPos := ViewportMap.Camera.WorldToLocal(UnitWorldPos);
+    // Convert the 3D local position to 2D container (viewport) position
+    // Just use the X and Y from the world position and ignore the Z axis
+    UnitContainerPos := ViewportMap.LocalToContainerPosition(Vector2(UnitLocalPos.X, UnitLocalPos.Y), true);
+
+    if SelectionRect.Contains(UnitContainerPos) then
+    begin
+      myUnit.Selected := True;
+    end
+    else
+      myUnit.Selected := False;
+  end;
+end;
+
 
 procedure TViewPlay.UpdateTurnStatus;
 var
@@ -306,19 +446,24 @@ begin
   end;
 end;
 
-type
-  TMoveResult = (mrNoMovementTooSmall, mrNoMovementAtTarget, mrMoved);
 
 
   {go from posS to posT at S pixels per second}
-function TryMoveTowards(var PosS: TVector3; const PosT: TVector3;
+function TViewPlay.TryMoveTowards(var PosS: TVector3; const PosT: TVector3;
   const S: Single; const SecsPas: Single; out MovedDistance: Single): TMoveResult;
 var
   direction: TVector3;
-  speedPerSecond: Single;
+  speedPerSecond, finalSpeed: Single;
   distance: Single;
+  TileSpeed:Single;
+  TileTarget:TVector2Integer;
 begin
+  Map.Data.PositionToTile(PosT.XY, TileTarget);
+  //TileSpeed := (0 - (getUnitSpeed(TileTarget.X,TileTarget.Y) - MAXSPEED) ) /50 ;
   speedPerSecond := S ;
+  TileSpeed :=  getUnitSpeed(TileTarget.X,TileTarget.Y) /MAXSPEED ;
+
+  finalSpeed := speedPerSecond - speedPerSecond * TileSpeed; //MAXSPEED is max cost speed
   direction := PosT - PosS;
 
   if direction.Length <= 1 then
@@ -329,7 +474,7 @@ begin
   else
   begin
     direction := direction.Normalize;
-    distance := speedPerSecond * SecsPas;
+    distance := finalSpeed * SecsPas;
 
     if distance < 0.001 then
     begin
@@ -343,6 +488,90 @@ begin
       Result := mrMoved; // Actual movement
     end;
   end;
+end;
+
+function TViewPlay.IsTilePassable(X, Y: Integer): Boolean;
+begin
+
+  Result:= not UnitsOnMap.IsWater(Vector2Integer(X,Y));
+end;
+
+//returns the tilespeed rename this
+function TViewPlay.getUnitSpeed(X, Y: Integer): Integer;
+var
+  TilePosition : TVector2Integer;
+  Tileset: TCastleTiledMapData.TTileset;
+  Frame: Integer;
+  HorizontalFlip, VerticalFlip, DiagonalFlip: Boolean;
+  FrameSpeed:integer;
+begin
+   if not IsTilePassable(X,Y) then
+    exit(0);
+
+   TilePosition := Vector2Integer(X,Y);
+   Map.Data.TileRenderData(TilePosition,
+    Map.Data.Layers[0],
+    Tileset, Frame, HorizontalFlip, VerticalFlip, DiagonalFlip);
+
+  Case Frame of //tiles  the bigger the speed the less passable something is
+  //if framespeed=0 then we have maxspeed
+    0: FrameSpeed := 10;
+    1: FrameSpeed := 20;
+    2: FrameSpeed := 20;
+    3: FrameSpeed := 30;
+    4: FrameSpeed := 40;
+    5: FrameSpeed := MAXSPEED;  //MAXSPEED = no passable  real speed goes to 0
+    6: FrameSpeed := MAXSPEED;
+    7: FrameSpeed := MAXSPEED;
+    8: FrameSpeed := 40;
+    9: FrameSpeed := 30;
+    10: FrameSpeed := MAXSPEED;
+    11: FrameSpeed := MAXSPEED;
+  End;
+
+  Result:= FrameSpeed;
+
+end;
+
+
+procedure TViewPlay.DoPaintPath;
+var
+  I: Integer;
+  t: PathfinderUnit.TTile;
+  TileVector:TVector2Integer;
+  TileRect: TFloatRectangle;
+  TileImage : TCastleImageTransform;
+  //s:String;
+Begin
+  //exit;
+  //s:='';
+  for I := 0 to DrawPath.Count -1 do
+  begin
+    t:= PathfinderUnit.TTile(DrawPath.Items[i]^);
+    TileVector:= Vector2Integer(t.X,t.Y);
+   // s:=s+'('+inttostr(t.X)+','+inttostr(t.Y)+')->';
+    TileRect := Map.TileRectangle(TileVector);
+    TileImage := TCastleImageTransform.Create(FreeAtStop);
+    TileImage.URL := 'castle-data:/tile_hover/hexagonal.png';
+    TileImage.Translation := Vector3(TileRect.Center, ZHover);
+    TileImage.Size := Vector2(TileRect.Width, TileRect.Height);
+    TileImage.Tag:=9;
+    Map.Add(TileImage);
+    TileImage.Exists := true;
+   // Outputdebugstring(PChar(s));
+  end;
+
+End;
+
+
+procedure TViewPlay.ClearMapPath;
+var i:integer;
+begin
+       for i := map.Count-1 downto  0 do
+        begin
+          if TCastleTransform(map.Items[i]).Tag=9 then
+           map.Remove(TCastleTransform(map.Items[i]));
+        end;
 end;
 
 procedure TViewPlay.Update(const SecondsPassed: Single;
@@ -366,8 +595,16 @@ var
   mdist:Single;
   i:integer;
   R: TFloatRectangle;
-
+  pathf : TPathfinder;
+  tempUList:TunitList;
 begin
+  if SelectionOverlay.Dragging then
+  begin
+    TileUnderMouseImage.Exists:=false;
+    exit;
+  end;
+
+
   ViewportMap.PositionToRay(Container.MousePosition, true, RayOrigin, RayDirection);
 
   { Update TileUnderMouseExists, TileUnderMouse.
@@ -400,8 +637,26 @@ begin
     TileUnderMouseImage.Translation := Vector3(TileRect.Center, ZHover);
     TileUnderMouseImage.Size := Vector2(TileRect.Width, TileRect.Height);
     UnitUnderMouse := UnitsOnMap[TileUnderMouse];
+    //paint path to tileundermouse
+    if (SelectedUnit <> nil) and not TVector2Integer.Equals(DrawAtTile,TileUnderMouse) and not TVector2Integer.Equals(SelectedUnit.TilePosition,TileUnderMouse) then
+    begin
+       pathf := TPathfinder.Create(Selectedunit.TilePosition.X,Selectedunit.TilePosition.Y, TileUnderMouse.X, TileUnderMouse.Y);
+       pathf.OnIsTilePassable := IsTilePassable;
+       pathf.OnGetSpeed := GetUnitSpeed;
+       ClearMapPath;
+       DrawPath := pathf.FindPath;  //list of ttile Records
+       if assigned(DrawPath) and (DrawPath.Count>0) then
+       begin
+        DrawAtTile :=  TileUnderMouse;
+        DoPaintPath;
+       end
+       else DrawAtTile:= TVector2Integer.Zero;
+       pathf.Free;
+    end;
   end else
     UnitUnderMouse := nil;
+
+
 
   { update TileUnderMouseImage.Color }
   if (SelectedUnit <> nil) and
@@ -433,12 +688,17 @@ begin
   ]);
 
   {Update moving units}
+  tempUList:=TunitList.Create(False);
+  try
   for I := 0 to UnitsOnMap.UnitsCount - 1 do
   begin
+     try
       mvUnit:= UnitsOnMap.Units[I];
+     except
+        break;
+     end;
       if not TVector2Integer.equals(mvUnit.TargetTile,mvUnit.TilePosition) then
       begin //unit is moving
-
         mvUnit.SecondsPassed:=mvUnit.SecondsPassed+SecondsPassed;
 
         R := UnitsOnMap.Map.TileRectangle(mvUnit.TargetTile);
@@ -446,7 +706,8 @@ begin
         strtPos := mvUnit.Transform.Translation;
         case TryMoveTowards(strtPos,targPos,mvUnit.Speed,mvUnit.SecondsPassed,mdist) of
           mrNoMovementTooSmall: ; //nothing todo we already added the secs
-          mrNoMovementAtTarget: mvUnit.TilePosition:=mvUnit.TargetTile;
+          mrNoMovementAtTarget: tempUList.Add(mvUnit); //add unit to move ended list
+
           mrMoved: begin
                      mvUnit.SecondsPassed:=0;
                      mvUnit.Transform.Translation:=strtPos;
@@ -454,6 +715,57 @@ begin
          end;
 
       end;
+  end;
+   for mvUnit in tempUList do
+   Begin
+      mvUnit.TilePosition:=mvUnit.TargetTile;
+      mvUnit.PathReached;
+   End;
+  finally
+   tempUList.Free;
+  end;
+
+
+end;
+
+{ TSelectionOverlay }
+
+procedure TSelectionOverlay.Render;
+Const BorderWidth=4;
+var
+  LeftX, RightX, TopY, BottomY: Single;
+  FillColor, BorderColor: TCastleColor;
+  R: TFloatRectangle;
+
+begin
+  inherited;
+
+  if Dragging then
+  begin
+
+    LeftX := Min(DragStart.X, DragEnd.X);
+    RightX := Max(DragStart.X, DragEnd.X);
+    BottomY := Min(DragStart.Y, DragEnd.Y);
+    TopY := Max(DragStart.Y, DragEnd.Y);
+
+    R := FloatRectangle(LeftX, BottomY, RightX - LeftX, TopY - BottomY);
+    FillColor := Vector4(1.0, 1.0, 0.0, 0.5);    // Yellow with 50% transparency
+    BorderColor := Vector4(1.0, 0.0, 0.0, 1.0);  // Fully opaque yellow
+
+    DrawRectangle(R,FillColor, bsSrcAlpha, bdOneMinusSrcAlpha, true); // <- this means "filled"
+
+    // Optional: also draw outline
+//    DrawRectangle(R,BorderColor,bsSrcAlpha, bdOneMinusSrcAlpha, false );
+
+    // Top
+    DrawRectangle(FloatRectangle(R.Left, R.Top - BorderWidth, R.Width, BorderWidth), BorderColor, bsSrcAlpha, bdOneMinusSrcAlpha, true);
+    // Bottom
+    DrawRectangle(FloatRectangle(R.Left, R.Bottom, R.Width, BorderWidth), BorderColor, bsSrcAlpha, bdOneMinusSrcAlpha, true);
+    // Left
+    DrawRectangle(FloatRectangle(R.Left, R.Bottom, BorderWidth, R.Height), BorderColor, bsSrcAlpha, bdOneMinusSrcAlpha, true);
+    // Right
+    DrawRectangle(FloatRectangle(R.Right - BorderWidth, R.Bottom, BorderWidth, R.Height), BorderColor, bsSrcAlpha, bdOneMinusSrcAlpha, true);
+
   end;
 end;
 

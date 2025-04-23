@@ -7,7 +7,7 @@
       "$$ClassName" : "TCastleImageControl",
       "Content" : {
         "$$ClassName" : "TCastleImagePersistent",
-        "URL" : "castle-data:/images/main_menu_background/siege.png"
+        "Url" : "castle-data:/images/main_menu_background/siege.png"
       },
       "Height" : 1.0000000000000000E+001,
       "HorizontalAnchorParent" : "hpMiddle",
@@ -46,13 +46,13 @@
           "$$ClassName" : "TCastleLabel",
           "ColorPersistent" : {
             "$$ClassName" : "TCastleColorPersistent",
-            "Red" : 7.4901962280273437E-001
+            "Red" : 7.4901962280273438E-001
           },
           "CustomFont" : "Font1",
-          "FontSize" : 6.0000000000000000E+001,
+          "FontSize" : 1.2000000000000000E+002,
           "Name" : "LabelHeader",
           "Text" : [
-            "\"Aliens vs Humans\""
+            "War Simulation"
           ],
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
@@ -66,7 +66,7 @@
               "$$ClassName" : "TCastleFont",
               "Name" : "Font1",
               "OptimalSize" : 100,
-              "URL" : "castle-data:/fonts/DejaVuSerif-Bold.ttf"
+              "Url" : "castle-data:/fonts/DejaVuSerif-Bold.ttf"
             }
           ]
         },
@@ -74,17 +74,17 @@
           "$$ClassName" : "TCastleLabel",
           "ColorPersistent" : {
             "$$ClassName" : "TCastleColorPersistent",
-            "Red" : 7.4901962280273437E-001
+            "Red" : 7.4901962280273438E-001
           },
-          "FontSize" : 2.0000000000000000E+001,
+          "FontSize" : 8.0000000000000000E+001,
           "Name" : "Label2",
           "Text" : [
-            "Strategy game demo using Castle Game Engine"
+            "Ancient warfare"
           ],
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -8.9600006103515625E+001
+            "Y" : -1.5919999694824219E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"
@@ -96,14 +96,14 @@
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -1.2160000610351562E+002
+            "Y" : -2.5720001220703125E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"
         },
         {
           "$$ClassName" : "TCastleButton",
-          "Caption" : "Play on Hexagonal Map",
+          "Caption" : "Play",
           "CustomBackgroundDisabled" : {
             "$$ClassName" : "TCastleImagePersistent"
           },
@@ -116,7 +116,14 @@
           "CustomBackgroundPressed" : {
             "$$ClassName" : "TCastleImagePersistent"
           },
-          "FontSize" : 3.0000000000000000E+001,
+          "CustomTextColorPersistent" : {
+            "$$ClassName" : "TCastleColorPersistent",
+            "Blue" : 7.1764707565307617E-001,
+            "Green" : 7.4509806931018829E-002,
+            "Red" : 7.8431375324726105E-002
+          },
+          "CustomTextColorUse" : true,
+          "FontSize" : 1.0000000000000000E+002,
           "Image" : {
             "$$ClassName" : "TCastleImagePersistent"
           },
@@ -124,91 +131,7 @@
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -1.8160000610351562E+002
-          },
-          "VerticalAnchorParent" : "vpTop",
-          "VerticalAnchorSelf" : "vpTop"
-        },
-        {
-          "$$ClassName" : "TCastleButton",
-          "Caption" : "Play on Isometric Staggered Map",
-          "CustomBackgroundDisabled" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundFocused" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundNormal" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundPressed" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "FontSize" : 3.0000000000000000E+001,
-          "Image" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "Name" : "ButtonPlayIsometricStaggered",
-          "TranslationPersistent" : {
-            "$$ClassName" : "TCastleVector2Persistent",
-            "X" : 1.0000000000000000E+001,
-            "Y" : -2.4010000610351562E+002
-          },
-          "VerticalAnchorParent" : "vpTop",
-          "VerticalAnchorSelf" : "vpTop"
-        },
-        {
-          "$$ClassName" : "TCastleButton",
-          "Caption" : "Play on Isometric Map",
-          "CustomBackgroundDisabled" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundFocused" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundNormal" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundPressed" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "FontSize" : 3.0000000000000000E+001,
-          "Image" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "Name" : "ButtonPlayIsometric",
-          "TranslationPersistent" : {
-            "$$ClassName" : "TCastleVector2Persistent",
-            "X" : 1.0000000000000000E+001,
-            "Y" : -2.9860000610351562E+002
-          },
-          "VerticalAnchorParent" : "vpTop",
-          "VerticalAnchorSelf" : "vpTop"
-        },
-        {
-          "$$ClassName" : "TCastleButton",
-          "Caption" : "Play on Orthogonal Map",
-          "CustomBackgroundDisabled" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundFocused" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundNormal" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "CustomBackgroundPressed" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "FontSize" : 3.0000000000000000E+001,
-          "Image" : {
-            "$$ClassName" : "TCastleImagePersistent"
-          },
-          "Name" : "ButtonPlayOrthogonal",
-          "TranslationPersistent" : {
-            "$$ClassName" : "TCastleVector2Persistent",
-            "X" : 1.0000000000000000E+001,
-            "Y" : -3.5710000610351562E+002
+            "Y" : -3.1720001220703125E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"
@@ -220,7 +143,7 @@
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -4.1560000610351562E+002
+            "Y" : -4.4220001220703125E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"
@@ -240,7 +163,7 @@
           "CustomBackgroundPressed" : {
             "$$ClassName" : "TCastleImagePersistent"
           },
-          "FontSize" : 3.0000000000000000E+001,
+          "FontSize" : 8.0000000000000000E+001,
           "Image" : {
             "$$ClassName" : "TCastleImagePersistent"
           },
@@ -248,7 +171,7 @@
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -4.7560000610351562E+002
+            "Y" : -5.0220001220703125E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"

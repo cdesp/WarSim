@@ -1,2 +1,4 @@
 code/__history/
 castle-engine-output/
+*.exe
+*.rsm

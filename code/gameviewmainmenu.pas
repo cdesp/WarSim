@@ -27,15 +27,9 @@ type
     { Components designed using CGE editor.
       These fields will be automatically initialized at Start. }
     ButtonPlayHexagonal: TCastleButton;
-    ButtonPlayIsometricStaggered: TCastleButton;
-    ButtonPlayIsometric: TCastleButton;
-    ButtonPlayOrthogonal: TCastleButton;
     ButtonQuit: TCastleButton;
   strict private
     procedure ClickHexagonal(Sender: TObject);
-    procedure ClickIsometricStaggered(Sender: TObject);
-    procedure ClickIsometric(Sender: TObject);
-    procedure ClickOrthogonal(Sender: TObject);
     procedure ClickQuit(Sender: TObject);
   public
     constructor Create(AOwner: TComponent); override;
@@ -61,9 +55,6 @@ procedure TViewMainMenu.Start;
 begin
   inherited;
   ButtonPlayHexagonal.OnClick := {$ifdef FPC}@{$endif}ClickHexagonal;
-  ButtonPlayIsometricStaggered.OnClick := {$ifdef FPC}@{$endif}ClickIsometricStaggered;
-  ButtonPlayIsometric.OnClick := {$ifdef FPC}@{$endif}ClickIsometric;
-  ButtonPlayOrthogonal.OnClick := {$ifdef FPC}@{$endif}ClickOrthogonal;
   ButtonQuit.OnClick := {$ifdef FPC}@{$endif}ClickQuit;
   ButtonQuit.Exists := ApplicationProperties.ShowUserInterfaceToQuit;
 end;
@@ -74,23 +65,6 @@ begin
   Container.View := ViewPlay;
 end;
 
-procedure TViewMainMenu.ClickIsometricStaggered(Sender: TObject);
-begin
-  ViewPlay.MapName := 'map-isometric-staggered';
-  Container.View := ViewPlay;
-end;
-
-procedure TViewMainMenu.ClickIsometric(Sender: TObject);
-begin
-  ViewPlay.MapName := 'map-isometric';
-  Container.View := ViewPlay;
-end;
-
-procedure TViewMainMenu.ClickOrthogonal(Sender: TObject);
-begin
-  ViewPlay.MapName := 'map-orthogonal';
-  Container.View := ViewPlay;
-end;
 
 procedure TViewMainMenu.ClickQuit(Sender: TObject);
 begin
