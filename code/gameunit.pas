@@ -27,13 +27,18 @@ type
 
   TUnit = class;
   TUnitList = TObjectList<TUnit>;
-  TGroupList = TObjectList<TUnitList>;
+  TGroupList = TObjectDictionary<integer,TUnitList>;
 
   TUnitsOnMap = class(TComponent)
   private
     FItems: array of array of TUnitList;
     FUnits: TComponentList;
     FGroupList:TGroupList;
+    FSelectedGroup:integer;
+    procedure GroupSelect(GroupID: integer);
+    procedure GroupUnSelect(GroupID: integer);
+    procedure setSelectedGroup(const Value: integer);
+    procedure setGroupSelect(GroupID:Integer; V: Boolean);
   strict private
     FMap: TCastleTiledMap;
     FUnitsCount: Integer;
@@ -57,11 +62,14 @@ type
 
     function UnitsCount: Integer;
     function UnitsOnTile(const TilePosition: TVector2Integer):TUnitList;
-    function NewGroup:TUnitList;
-    procedure DeleteGroup(group:TUnitList);
+    function NewGroup(GID:Integer):TUnitList;
+    procedure ClearSelectedUntis;
+    procedure DeleteGroup(GroupID:integer);
+    Procedure AddSelectedUnitsToGroup(GroupId:Integer);
     property Units[const Index: Integer]: TUnit read GetUnits;
     property Map: TCastleTiledMap read FMap;
     property GroupList:TGroupList read FGroupList;
+    property SelectedGroup:integer read FSelectedGroup write setSelectedGroup;
     function IsWater(const TilePosition: TVector2Integer): Boolean;
   end;
 
@@ -73,8 +81,8 @@ type
     function getFacingToTarget: Integer;
     procedure checkValidTile;
     function IsInGroup: Boolean;
-    procedure SetGroupIndex(const Value: Integer);
-    function getGroup: TUnitList;
+    function getGroupID: Integer;
+    procedure setGroupID(const Value: Integer);
     procedure setSelected(const Value: Boolean);
   var
       FSecondsPassed: Single;
@@ -82,7 +90,7 @@ type
       FTargetTile: TVector2Integer;
       FUnitFacing: Integer;
       FUnitFacingSave: Integer;
-      FGroupIndex: Integer;
+      FGroupID: Integer;
       procedure SetSecondsPassed(const Value: Single);
       procedure SetSpeed(const Value: Integer);
       procedure SetTargetTile(const Value: TVector2Integer);
@@ -131,6 +139,7 @@ type
     function CanMove(const NewTilePosition: TVector2Integer): Boolean;
     procedure PathReached;
     procedure ClearGroup;
+    function GroupUnitList:TUnitlist;
 
     property Kind: TUnitKind read FKind;
     property Attack: Integer read FAttack;
@@ -145,9 +154,8 @@ type
     property TilePosition: TVector2Integer read FTilePosition write SetTilePosition;
     property UnitFacing: Integer read FUnitFacing write SetUnitFacing;
     property MovingPath:TList read FMovingPath write SetMovingPath;
-    property GroupIndex:Integer read FGroupIndex write SetGroupIndex;
     property InGroup:Boolean read IsInGroup;
-    property Group:TUnitList read getGroup;
+    property GroupID:Integer read getGroupID write setGroupID;
     property Selected:Boolean read FSelected write setSelected;
   end;
 
@@ -162,6 +170,44 @@ uses SysUtils, TypInfo, Math, windows,GameViewPlay, System.Types,
 
 { TUnitsOnMap ---------------------------------------------------------------- }
 
+procedure TUnitsOnMap.setGroupSelect(GroupID:integer;V:Boolean);
+var UList:TUnitList;
+    i:integer;
+begin
+  if not Grouplist.TryGetValue(GroupID,UList) then exit;
+  for i := 0 to UList.Count-1 do
+     UList[i].Selected:=v;
+end;
+
+procedure TUnitsOnMap.GroupSelect(GroupID:integer);
+begin
+  setGroupSelect(GroupID,true);
+  FSelectedGroup:=GroupID;
+end;
+
+procedure TUnitsOnMap.GroupUnSelect(GroupID:integer);
+begin
+  setGroupSelect(GroupID,false);
+  FSelectedGroup:=-1;
+end;
+
+procedure TUnitsOnMap.AddSelectedUnitsToGroup(GroupId: Integer);
+Var Ulist:TUnitList;
+    i:integer;
+begin
+  if not Grouplist.ContainsKey(Groupid) then
+   UList:=NewGroup(GroupID)
+  else
+   GroupList.TryGetValue(GroupID,UList);
+  for i := 0 to UnitsCount-1 do
+   if Units[i].Selected then
+   begin
+     UList.Add(Units[i]);
+     Units[i].GroupID:=GroupId;
+   end;
+
+end;
+
 constructor TUnitsOnMap.Create(const AOwner: TComponent;
   const AMap: TCastleTiledMap);
 var i,j : integer;
@@ -173,11 +219,28 @@ begin
     for j := 0 to Map.Data.Height-1 do
        FItems[i,j]:= TUnitlist.Create(False);
   FUnits := TComponentList.Create(false);
+  FGroupList:=TGroupList.Create();
 end;
 
-procedure TUnitsOnMap.DeleteGroup(group: TUnitList);
+procedure TUnitsOnMap.ClearSelectedUntis;
+var i:integer;
 begin
-  GroupList.Remove(group);
+  for i:=0 to UnitsCount-1 do
+    Units[i].Selected:=false;
+end;
+
+procedure TUnitsOnMap.DeleteGroup(GroupID: Integer);
+Var UList:TUnitList;
+    i:integer;
+begin
+  if GroupList.ContainsKey(GroupID) then
+  begin
+    GroupUnSelect(GroupID);
+    if Grouplist.TryGetValue(GroupID,UList) then
+      for i :=0 to UList.Count-1 do
+       UList[i].GroupID:=-1;
+    GroupList.Remove(GroupID);//free UList automatically
+  end;
 end;
 
 destructor TUnitsOnMap.Destroy;
@@ -236,17 +299,34 @@ begin
 //    ((Frame mod 4) = 1);
 end;
 
-function TUnitsOnMap.NewGroup: TUnitList;
+function TUnitsOnMap.NewGroup(GID:Integer): TUnitList;
 begin
-  Result:=TunitList.Create;
-  GroupList.Add(Result);
+  Result:=TunitList.Create(false);
+  GroupList.Add(GID,Result);
+end;
+
+procedure TUnitsOnMap.setSelectedGroup(const Value: integer);
+begin
+  if FSelectedGroup>-1 then
+   GroupUnSelect(FSelectedGroup);
+  FSelectedGroup := Value;
+  GroupSelect(FSelectedGroup);
 end;
 
 { TUnit ----------------------------------------------------------------------- }
 
+function TUnit.GroupUnitList:TUnitlist;
+begin
+ if not UnitsOnMap.FGroupList.TryGetValue(FGroupID,Result) then
+   Result:=nil;
+end;
+
 procedure TUnit.ClearGroup;
 begin
-  FGroupIndex:=-1;
+  //removeunit from group
+  if FGroupID>-1 then
+    GroupUnitList.Remove(Self);
+  FGroupID:=-1;
 end;
 
 constructor TUnit.Create(AOwner: TComponent);
@@ -263,6 +343,7 @@ begin
   TextMovement := FindRequiredComponent('TextMovement') as TCastleText;
   SelBox := FindRequiredComponent('SelBox') as TCastleBox;
 
+  FGroupID:=-1;
   UnitFacing:=0;
 end;
 
@@ -316,7 +397,7 @@ end;
 
 function TUnit.IsInGroup: Boolean;
 begin
-   Result:= assigned(Group);
+   Result:= GroupUnitList<>nil;
 end;
 
 destructor TUnit.Destroy;
@@ -365,6 +446,13 @@ begin
     UnitsOnMap.FItems[TilePosition.X, TilePosition.Y].Remove(Self);
 
   Transform.Exists := false;
+end;
+
+procedure TUnit.setGroupID(const Value: Integer);
+begin
+  //if we belong to another group we remove ourselfs
+  ClearGroup;
+  FGroupID:=Value;
 end;
 
 procedure TUnit.SetTilePosition(const Value: TVector2Integer);
@@ -430,10 +518,6 @@ begin
   end;
 end;
 
-procedure TUnit.SetGroupIndex(const Value: Integer);
-begin
-  FGroupIndex := Value;
-end;
 
 procedure TUnit.SetLife(const Value: Integer);
 begin
@@ -462,11 +546,9 @@ Begin
    Result := TPathFinder.GetHexDirection(Tile(TilePosition.X,TilePosition.Y),Tile(TargetTile.X,TargetTile.Y));
 End;
 
-function TUnit.getGroup: TUnitList;
+function TUnit.getGroupID: Integer;
 begin
-  if (FGroupIndex>-1) and (FUnitsOnMap.GroupList.Count<FGroupIndex) then
-   Result:=FUnitsOnMap.GroupList[FGroupIndex]
-  else Result:=nil;
+   Result:=FGroupID;
 end;
 
 

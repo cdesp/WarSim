@@ -44,10 +44,12 @@ type
   TViewPlay = class(TCastleView)
   private
     SelectionOverlay :TSelectionOverlay ;
+    UnitUnderMouse: TUnit;
     procedure DoPaintPath;
     procedure ClearMapPath;
     function TryMoveTowards(var PosS: TVector3; const PosT: TVector3; const S,
       SecsPas: Single; out MovedDistance: Single): TMoveResult;
+    procedure ClearSelection;
   published
     { Components designed using CGE editor.
       These fields will be automatically initialized at Start. }
@@ -145,6 +147,7 @@ procedure TViewPlay.Start;
     H := Map.Data.Height;
     YBegin := H div 3;
     YEnd := H - 1 - H div 3;
+    AddUnit(ukHoplites, 0, 0, 0, 0);
 
     for I := 0 to 2 do
       AddUnit(ukAlienHeavy, W div 8 + 0, W div 8 + 0, YBegin, YEnd);
@@ -156,6 +159,8 @@ procedure TViewPlay.Start;
       AddUnit(ukArchers, W - 1 - W div 8 - 2, W - 1 - W div 8 - 2, YBegin, YEnd);
     for I := 0 to 3 do
       AddUnit(ukKnights, W - 1 - W div 8 - 3, W - 1 - W div 8 - 1, YBegin, YEnd);
+
+
 
   end;
 
@@ -171,6 +176,8 @@ begin
   UnitsOnMap := TUnitsOnMap.Create(FreeAtStop, Map);
 
   PlaceInitialUnits;
+
+
 
   TileUnderMouseImage := TCastleImageTransform.Create(FreeAtStop);
   case Map.Data.Orientation of
@@ -246,8 +253,6 @@ begin
   UpdateTurnStatus;
 end;
 
-var
-  UnitUnderMouse: TUnit;
 
 
 function TViewPlay.Press(const Event: TInputPressRelease): Boolean;
@@ -277,8 +282,12 @@ function TViewPlay.Press(const Event: TInputPressRelease): Boolean;
     SelectedUnitVisualization.Exists := true;
     SelectedUnitVisualization.Parent := SelectedUnit.Transform;
     SelectedUnitVisualization.Rotation := SelectedUnit.FaceRotation;
+    //If in group select all group
+    if SelectedUnit.InGroup then
+     UnitsOnMap.SelectedGroup:=SelectedUnit.GroupID;
   end;
 
+var Gid:integer;
 begin
   Result := inherited;
   if Result then Exit;
@@ -286,6 +295,22 @@ begin
   begin
      exit;
   end;
+
+  if (mkCtrl in Event.ModifiersDown) and (event.Key in [key0..key9]) then   //ctrl1- ctrl9 add groups
+  begin
+    Gid:=ord(event.Key)-48;
+    UnitsOnMap.DeleteGroup(Gid);//destroys group - empty list from units
+    UnitsOnMap.AddSelectedUnitsToGroup(Gid);//add all selected nunits to this group
+    exit(true);
+  end
+  else
+   if event.Key in [key0..key9] then
+   Begin //select group
+      Gid:=ord(event.Key)-48;
+      ClearSelection;
+      UnitsOnMap.SelectedGroup:=Gid;
+      exit(true);
+   end;
 
 
   if Event.IsMouseButton(buttonLeft) and TileUnderMouseExists then
@@ -323,10 +348,8 @@ begin
       end else
       begin
         // move
-        //SelectedUnit.TilePosition := TileUnderMouse;
-        //SelectedUnit.TargetTile := TileUnderMouse; //Start Moving
         SelectedUnit.MovingPath := DrawPath;
-        //SelectedUnit.Movement := SelectedUnit.Movement - 1;
+        //todo:if in group Move all Units
         UpdateTurnStatus; // SelectedUnit stats changed
         SelectedUnit:=nil;
         SelectedUnitVisualization.Exists := false;
@@ -341,6 +364,7 @@ begin
   end
   else if Event.IsMouseButton(buttonRight) then
   begin
+    ClearSelection;
     SelectedUnit:=nil;
     SelectedUnitVisualization.Exists := false;
     ClearMapPath;
@@ -376,6 +400,7 @@ begin
     begin
       // Start selection
       SelectionOverlay.Dragging := true;
+      ClearSelection;//clear previous selected units
     end;
     if SelectionOverlay.Dragging then
     begin
@@ -391,6 +416,11 @@ begin
 end;
 
 
+procedure TViewPlay.ClearSelection;
+begin
+  UnitsOnMap.ClearSelectedUntis;
+end;
+
 procedure TViewPlay.SelectUnitsInRect(const StartScreen, EndScreen: TVector2);
 var
   SelectionRect: TFloatRectangle;
@@ -398,25 +428,31 @@ var
   UnitContainerPos:TVector2;
   myUnit: TUnit; // your custom unit class
   i:integer;
+  RayDirection: TVector3;
+  vpStart,vpEnd:TVector3;
+  sx,sy,ex,ey:Single;
+
+  function SelectionContainsUnit:Boolean;
+  begin
+    Result:= (sx<UnitWorldPos.X) and (UnitWorldPos.X<ex) and
+       (sy<UnitWorldPos.Y) and (UnitWorldPos.Y<ey);
+  end;
+
 begin
-  SelectionRect := FloatRectangle(StartScreen, EndScreen.X-StartScreen.X, EndScreen.Y-StartScreen.X);
+
+  ViewportMap.PositionToRay(StartScreen, true, vpStart, RayDirection);
+  ViewportMap.PositionToRay(EndScreen, true, vpEnd, RayDirection);
+  sx:=min(vpStart.x,vpEnd.x);
+  ex:=max(vpStart.x,vpEnd.x);
+  sy:=min(vpStart.y,vpEnd.y);
+  ey:=max(vpStart.y,vpEnd.y);
+
 
   for i:=0 to UnitsOnMap.UnitsCount-1 do
   begin
     myUnit := UnitsOnMap.Units[i];
     UnitWorldPos := myUnit.Transform.Translation; // or Unit.TileToWorld(...) if needed
-    // Convert world position to camera's local coordinates
-    UnitLocalPos := ViewportMap.Camera.WorldToLocal(UnitWorldPos);
-    // Convert the 3D local position to 2D container (viewport) position
-    // Just use the X and Y from the world position and ignore the Z axis
-    UnitContainerPos := ViewportMap.LocalToContainerPosition(Vector2(UnitLocalPos.X, UnitLocalPos.Y), true);
-
-    if SelectionRect.Contains(UnitContainerPos) then
-    begin
-      myUnit.Selected := True;
-    end
-    else
-      myUnit.Selected := False;
+    myUnit.Selected :=SelectionContainsUnit;
   end;
 end;
 

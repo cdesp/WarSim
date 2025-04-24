@@ -106,12 +106,10 @@
       "Collides" : false,
       "ColorPersistent" : {
         "$$ClassName" : "TCastleColorPersistent",
-        "Alpha" : 8.9999997615814209E-001,
-        "Blue" : 8.0000001192092896E-001,
-        "Green" : 6.0000002384185791E-001,
-        "Red" : 4.0000000596046448E-001
+        "Alpha" : 9.0196079015731812E-001,
+        "Blue" : 0.0000000000000000E+000,
+        "Red" : 9.3333333730697632E-001
       },
-      "Exists" : false,
       "Name" : "SelBox",
       "RenderOptions" : {
         "$$ClassName" : "TCastleScene.TSceneRenderOptions",
