@@ -8,6 +8,8 @@ uses
 type
   TTile = record
     X, Y: Integer;
+    class operator Add(const A, B: TTile): TTile;
+    class operator Subtract(const A, B: TTile): TTile;
   end;
 
   TTileArray= array[0..5] of TTile;//to keep the adjacent tiles
@@ -45,6 +47,32 @@ function Tile(X, Y:Integer):TTile;
 implementation
 uses windows;
 
+type
+  T2DIntArray = array[0..5, 0..1] of Integer;
+  P2DIntArray = ^T2DIntArray;
+const
+  // Corrected neighbor offsets as per user request:
+  // Even rows (0, 2, 4, etc.)
+  HexEvenROffsets: T2DIntArray = (
+    (0, +1),    // NorthEast
+    (-1, 0),    // East
+    (0, -1),    // SouthEast
+    (+1, -1),   // SouthWest
+    (+1, 0),    // West
+    (+1, +1)    // NorthWest
+  );
+
+  // Odd rows (1, 3, 5, etc.)
+  HexOddROffsets: T2DIntArray = (
+    (-1, +1),   // NorthEast
+    (-1, 0),    // East
+    (-1, -1),   // SouthEast
+    (0, -1),    // SouthWest
+    (+1, 0),    // West
+    (0, +1)     // NorthWest
+  );
+
+
 
 function Tile(X, Y:Integer):TTile;
 Begin
@@ -52,6 +80,17 @@ Begin
   Result.Y:=Y;
 End;
 
+class operator TTile.Add(const A, B: TTile): TTile;
+begin
+  Result.X := A.X + B.X;
+  Result.Y := A.Y + B.Y;
+end;
+
+class operator TTile.Subtract(const A, B: TTile): TTile;
+begin
+  Result.X := A.X - B.X;
+  Result.Y := A.Y - B.Y;
+end;
 
 constructor TNode.Create(aX, aY: Integer);
 begin
@@ -77,30 +116,6 @@ begin
   Result.Z := Z;
 end;
 
-type
-  T2DIntArray = array[0..5, 0..1] of Integer;
-  P2DIntArray = ^T2DIntArray;
-const
-  // Corrected neighbor offsets as per user request:
-  // Even rows (0, 2, 4, etc.)
-  HexEvenROffsets: T2DIntArray = (
-    (0, +1),    // NorthEast
-    (-1, 0),    // East
-    (0, -1),    // SouthEast
-    (+1, -1),   // SouthWest
-    (+1, 0),    // West
-    (+1, +1)    // NorthWest
-  );
-
-  // Odd rows (1, 3, 5, etc.)
-  HexOddROffsets: T2DIntArray = (
-    (-1, +1),   // NorthEast
-    (-1, 0),    // East
-    (-1, -1),   // SouthEast
-    (0, -1),    // SouthWest
-    (+1, 0),    // West
-    (0, +1)     // NorthWest
-  );
 
 class function TPathfinder.GetHexAdjTiles(Pos: TTile): TTileArray;
 var

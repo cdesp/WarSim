@@ -235,9 +235,9 @@ Var UList:TUnitList;
 begin
   if GroupList.ContainsKey(GroupID) then
   begin
-    GroupUnSelect(GroupID);
+    //GroupUnSelect(GroupID);
     if Grouplist.TryGetValue(GroupID,UList) then
-      for i :=0 to UList.Count-1 do
+      for i :=UList.Count-1 downto 0 do
        UList[i].GroupID:=-1;
     GroupList.Remove(GroupID);//free UList automatically
   end;

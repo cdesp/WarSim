@@ -21,7 +21,7 @@ interface
 uses Classes,
   CastleControls, CastleTiledMap, CastleUIControls, CastleTransform,
   CastleVectors, CastleKeysMouse, CastleScene, CastleViewport,
-  GameUnit, PathfinderUnit;
+  GameUnit, PathfinderUnit,System.Generics.Collections;
 
 Const MAXSPEED=50;  //Tile speed cost, lower means faster
       DragThreshold = 5.0;
@@ -30,8 +30,10 @@ type
 
   TMoveResult = (mrNoMovementTooSmall, mrNoMovementAtTarget, mrMoved);
 
+  TCubeCoord = record
+    X, Y, Z: Integer; // x + y + z = 0 always
+  end;
 
-type
   TSelectionOverlay = class(TCastleUserInterface)
   public
     Dragging: Boolean;
@@ -39,17 +41,26 @@ type
     procedure Render; override;
   end;
 
+  TGroupMove=class
+      RelativePos:TVector2Integer;
+      Delta: TCubeCoord;
+      OrigUnit: TUnit;
+  end;
 
+  TGroupMoveList=TObjectList<TGroupMove>;
 
   TViewPlay = class(TCastleView)
   private
     SelectionOverlay :TSelectionOverlay ;
     UnitUnderMouse: TUnit;
+    GroupMoveList:TGroupMoveList; //all group units relative to selected
     procedure DoPaintPath;
     procedure ClearMapPath;
     function TryMoveTowards(var PosS: TVector3; const PosT: TVector3; const S,
       SecsPas: Single; out MovedDistance: Single): TMoveResult;
     procedure ClearSelection;
+    procedure DoPaintgroup;
+    procedure ClearGroupMove;
   published
     { Components designed using CGE editor.
       These fields will be automatically initialized at Start. }
@@ -89,6 +100,7 @@ type
     function Motion(const Event: TInputMotion):Boolean; override;
     function IsTilePassable(X, Y: Integer): Boolean;
     function getUnitSpeed(X, Y: Integer): Integer;
+    function CreateGroupMoveList:boolean;
   end;
 
 var
@@ -101,12 +113,85 @@ uses SysUtils, windows,math,
   GameViewMainMenu, GameViewInstructions, GameViewInstructions2,
   GameViewWin, CastleGLUtils, CastleRenderOptions, CastleCameras;
 
+function  CubeCoord(x,y,z:integer):TCubeCoord;
+begin
+  result.X:=x;result.Y:=y;result.Z:=z;
+end;
+
+function OffsetToCube(const T: TVector2Integer): TCubeCoord;
+var
+  x, y, z: Integer;
+begin
+  x := T.X - (T.Y + (T.Y and 1)) div 2;
+  z := T.Y;
+  y := -x - z;
+  Result := CubeCoord(x, y, z);
+end;
+
+function CubeToOffset(const C: TCubeCoord): TVector2Integer;
+var
+  col, row: Integer;
+begin
+  col := C.X + (C.Z + (C.Z and 1)) div 2;
+  row := C.Z;
+  Result := Vector2Integer(col, row);
+end;
+
+// Subtract 2 cube coords
+function CubeDelta(const A, B: TCubeCoord): TCubeCoord;
+begin
+  Result.X := A.X - B.X;
+  Result.Y := A.Y - B.Y;
+  Result.Z := A.Z - B.Z;
+end;
+
+// Add cube coords
+function CubeAdd(const A, B: TCubeCoord): TCubeCoord;
+begin
+  Result.X := A.X + B.X;
+  Result.Y := A.Y + B.Y;
+  Result.Z := A.Z + B.Z;
+end;
+
+function TTile2Vector(t:TTile):TVector2Integer;
+begin
+   result:=Vector2Integer(t.X,t.Y);
+end;
+
+function Vector2TTile(v:TVector2Integer):TTile;
+begin
+  result:=Tile(v.X,v.Y);
+end;
+
+
 constructor TViewPlay.Create(AOwner: TComponent);
 begin
   inherited;
   DesignUrl := 'castle-data:/gameviewplay.castle-user-interface';
 end;
 
+function TViewPlay.CreateGroupMoveList:boolean;
+Var gm:TGroupMove;
+    i:integer;
+    SelList:TUnitList;
+    GrUnit:tunit;
+begin
+   result:=false;
+   if assigned(GroupMoveList) then
+    GroupMoveList.Free;
+   if not UnitsOnMap.GroupList.TryGetValue(UnitsOnMap.SelectedGroup,SelList) then exit;
+
+   GroupMoveList:=TGroupMoveList.Create(True);
+   for i := 0 to SelList.Count-1 do
+   begin
+      GrUnit := SelList.Items[i];
+      gm:=TGroupMove.Create;
+      GroupMoveList.Add(gm);
+      gm.OrigUnit:=GrUnit;
+      gm.Delta := CubeDelta(OffsetToCube(GrUnit.TilePosition),OffsetToCube(SelectedUnit.TilePosition));
+   end;
+   result:=true;
+end;
 
 procedure TViewPlay.Start;
 
@@ -354,6 +439,7 @@ begin
         SelectedUnit:=nil;
         SelectedUnitVisualization.Exists := false;
         ClearMapPath;
+        ClearGroupMove;
       end;
       Exit(true); // event handled
     end;
@@ -368,6 +454,7 @@ begin
     SelectedUnit:=nil;
     SelectedUnitVisualization.Exists := false;
     ClearMapPath;
+    ClearGroupMove;
     //Result:=true;
   end;
 end;
@@ -569,6 +656,63 @@ begin
 
 end;
 
+procedure TViewPlay.ClearGroupMove;
+var i:integer;
+begin
+       for i := map.Count-1 downto  0 do
+        begin
+          if TCastleTransform(map.Items[i]).Tag=8 then
+           map.Remove(TCastleTransform(map.Items[i]));
+        end;
+end;
+
+procedure TViewPlay.DoPaintgroup;
+var i:integer;
+    grm:TGroupMove;
+    TileVector:TVector2Integer;
+
+    procedure addUnitPlaceHolder;
+    var
+         TileRect: TFloatRectangle;
+         TileImage : TCastleImageTransform;
+    begin
+       // s:=s+'('+inttostr(t.X)+','+inttostr(t.Y)+')->';
+       TileRect := Map.TileRectangle(TileVector);
+       TileImage := TCastleImageTransform.Create(FreeAtStop);
+       TileImage.URL := 'castle-data:/tile_hover/hexagonal.png';
+       TileImage.Translation := Vector3(TileRect.Center, ZHover);
+       TileImage.Size := Vector2(TileRect.Width, TileRect.Height);
+       TileImage.Tag:=8;
+       if (grm.OrigUnit<>SelectedUnit) and UnitsOnMap.IsWater(TileVector) then     //check if tile is valid
+        TileImage.Color:=HexToColor('FF3333')
+       else if (grm.OrigUnit<>SelectedUnit) then
+         TileImage.Color:=HexToColor('66FF66')
+       else
+         TileImage.Color:=HexToColor('3399FF');
+       TileImage.Exists := true;
+       Map.Add(TileImage);
+    end;
+
+var t:TTile;
+    selTarg:TVector2Integer;
+    selTargTile:TTile;
+
+begin
+   ClearGroupMove;
+   //selTarg is the last tile of drawpath
+   selTargTile:= PathfinderUnit.TTile(DrawPath.First^);
+   selTarg:= TTile2Vector(selTargTile);
+   if CreateGroupMoveList then
+   begin
+     for i:=0 to GroupMoveList.Count-1 do
+     Begin
+       grm:=GroupMoveList[i];
+       TileVector:=CubeToOffset(CubeAdd(OffsetToCube(selTarg),grm.Delta));
+       addUnitPlaceHolder;
+     End;
+   end;
+end;
+
 
 procedure TViewPlay.DoPaintPath;
 var
@@ -680,11 +824,14 @@ begin
        pathf.OnIsTilePassable := IsTilePassable;
        pathf.OnGetSpeed := GetUnitSpeed;
        ClearMapPath;
+       ClearGroupMove;
        DrawPath := pathf.FindPath;  //list of ttile Records
        if assigned(DrawPath) and (DrawPath.Count>0) then
        begin
         DrawAtTile :=  TileUnderMouse;
         DoPaintPath;
+        if SelectedUnit.InGroup then
+          DoPaintgroup;
        end
        else DrawAtTile:= TVector2Integer.Zero;
        pathf.Free;
