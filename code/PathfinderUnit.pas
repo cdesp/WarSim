@@ -12,10 +12,11 @@ type
     class operator Subtract(const A, B: TTile): TTile;
   end;
 
-  TTileArray= array[0..5] of TTile;//to keep the adjacent tiles
+//  TTileArray= array[0..5] of TTile;//to keep the adjacent tiles
+  TTileArray= array of TTile;//to keep the adjacent tiles
 
   TCubeCoord = record
-    X, Y, Z: Integer;
+    X, Y, Z: Integer;  // x + y + z = 0 always
   end;
 
   TNode = class
@@ -37,7 +38,11 @@ type
       OnIsTilePassable: TIsTilePassableEvent;
       OnGetSpeed: TGetSpeedEvent;
     class function GetHexDirection(StartPos, TargetPos: TTile): Integer; static;
+    class function GetHexTilesAtDistance(const TilePosition: TTile;
+      const Distance: Integer): TTileArray; static;
     class function GetHexAdjTiles(Pos: TTile): TTileArray; static;
+    class function HexFacingDifference(UnitFacing: Integer; UnitTilePos,
+      EnemyTilePos: TTile): Integer; static;
     constructor Create(aStartX, aStartY, aEndX, aEndY: Integer);
     function FindPath: TList;
   end;
@@ -45,13 +50,13 @@ type
 function Tile(X, Y:Integer):TTile;
 
 implementation
-uses windows;
+uses windows,math;
 
 type
   T2DIntArray = array[0..5, 0..1] of Integer;
   P2DIntArray = ^T2DIntArray;
 const
-  // Corrected neighbor offsets as per user request:
+
   // Even rows (0, 2, 4, etc.)
   HexEvenROffsets: T2DIntArray = (
     (0, +1),    // NorthEast
@@ -71,6 +76,7 @@ const
     (+1, 0),    // West
     (0, +1)     // NorthWest
   );
+
 
 
 
@@ -116,6 +122,65 @@ begin
   Result.Z := Z;
 end;
 
+class function TPathfinder.GetHexTilesAtDistance(
+  const TilePosition: TTile;
+  const Distance: Integer
+): TTileArray;
+const
+  // Directions 0..5 same as your system, reused
+  DirCount = 6;
+var
+  Q, R, DQ, DR: Integer;
+  I, Step, Dir: Integer;
+  Current: TTile;
+  Directions: T2DIntArray;
+  ResultList: TTileArray;
+begin
+  if Distance = 0 then
+  begin
+    SetLength(Result, 1);
+    Result[0] := TilePosition;
+    Exit;
+  end;
+
+  SetLength(ResultList, 0);
+
+  // Starting position: move 'Distance' steps in direction 4 (West)
+  Current := TilePosition;
+  for Step := 1 to Distance do
+  begin
+    if (Current.Y mod 2) = 0 then
+      Directions := HexEvenROffsets
+    else
+      Directions := HexOddROffsets;
+
+    Current.X := Current.X + Directions[4, 0];
+    Current.Y := Current.Y + Directions[4, 1];
+  end;
+
+  // Now walk around the ring
+  for Dir := 0 to DirCount - 1 do
+  begin
+    for Step := 1 to Distance do
+    begin
+      if (Current.Y mod 2) = 0 then
+        Directions := HexEvenROffsets
+      else
+        Directions := HexOddROffsets;
+
+      Current.X := Current.X + Directions[Dir, 0];
+      Current.Y := Current.Y + Directions[Dir, 1];
+
+      // Append to result
+      SetLength(ResultList, Length(ResultList) + 1);
+      ResultList[High(ResultList)] := Current;
+    end;
+  end;
+
+  Result := ResultList;
+end;
+
+
 
 class function TPathfinder.GetHexAdjTiles(Pos: TTile): TTileArray;
 var
@@ -125,7 +190,7 @@ var
   I: Integer;
 
 begin
-
+  SetLength(Result, 6);
   RowParity := (Pos.Y mod 2) = 0; // Even-r layout → row parity based on Y
   if RowParity then
     Offsets := HexEvenROffsets
@@ -164,6 +229,34 @@ begin
 
   // Not a direct neighbor — you can raise an exception or return -1
   Result := -1;
+end;
+
+class function TPathfinder.HexFacingDifference(
+  UnitFacing: Integer;
+  UnitTilePos, EnemyTilePos: TTile
+): Integer;
+var
+  DirectionToEnemy, Diff: Integer;
+begin
+  DirectionToEnemy := GetHexDirection(UnitTilePos, EnemyTilePos);
+
+  if DirectionToEnemy = -1 then
+  begin
+    // Not adjacent, you can raise an exception or decide your handling here
+    Result := -1;
+    Exit;
+  end;
+
+  Diff := Abs(UnitFacing - DirectionToEnemy) mod 6;
+
+  case Diff of
+    0: Result := 0;
+    1, 5: Result := 1;
+    2, 4: Result := 2;
+    3: Result := 3;
+  else
+    Result := -1; // should not happen
+  end;
 end;
 
 

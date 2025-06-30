@@ -23,16 +23,12 @@ uses Classes,
   CastleVectors, CastleKeysMouse, CastleScene, CastleViewport,
   GameUnit, PathfinderUnit,System.Generics.Collections;
 
-Const MAXSPEED=50;  //Tile speed cost, lower means faster
+Const MAXSPEED = 50;  //Tile speed cost, lower means faster
       DragThreshold = 5.0;
 
 type
 
   TMoveResult = (mrNoMovementTooSmall, mrNoMovementAtTarget, mrMoved);
-
-  TCubeCoord = record
-    X, Y, Z: Integer; // x + y + z = 0 always
-  end;
 
   TSelectionOverlay = class(TCastleUserInterface)
   public
@@ -41,19 +37,12 @@ type
     procedure Render; override;
   end;
 
-  TGroupMove=class
-      RelativePos:TVector2Integer;
-      Delta: TCubeCoord;
-      OrigUnit: TUnit;
-  end;
 
-  TGroupMoveList=TObjectList<TGroupMove>;
 
   TViewPlay = class(TCastleView)
   private
     SelectionOverlay :TSelectionOverlay ;
     UnitUnderMouse: TUnit;
-    GroupMoveList:TGroupMoveList; //all group units relative to selected
     procedure DoPaintPath;
     procedure ClearMapPath;
     function TryMoveTowards(var PosS: TVector3; const PosT: TVector3; const S,
@@ -98,10 +87,10 @@ type
 //    procedure Render; override;
     function Release(const Event: TInputPressRelease):Boolean; override;
     function Motion(const Event: TInputMotion):Boolean; override;
-    function IsTilePassable(X, Y: Integer): Boolean;
-    function getUnitSpeed(X, Y: Integer): Integer;
-    function CreateGroupMoveList:boolean;
   end;
+
+  function Vector2TTile(v:TVector2Integer):TTile;forward;
+  function TTile2Vector(t:TTile):TVector2Integer;forward;
 
 var
   ViewPlay: TViewPlay;
@@ -113,45 +102,7 @@ uses SysUtils, windows,math,
   GameViewMainMenu, GameViewInstructions, GameViewInstructions2,
   GameViewWin, CastleGLUtils, CastleRenderOptions, CastleCameras;
 
-function  CubeCoord(x,y,z:integer):TCubeCoord;
-begin
-  result.X:=x;result.Y:=y;result.Z:=z;
-end;
 
-function OffsetToCube(const T: TVector2Integer): TCubeCoord;
-var
-  x, y, z: Integer;
-begin
-  x := T.X - (T.Y + (T.Y and 1)) div 2;
-  z := T.Y;
-  y := -x - z;
-  Result := CubeCoord(x, y, z);
-end;
-
-function CubeToOffset(const C: TCubeCoord): TVector2Integer;
-var
-  col, row: Integer;
-begin
-  col := C.X + (C.Z + (C.Z and 1)) div 2;
-  row := C.Z;
-  Result := Vector2Integer(col, row);
-end;
-
-// Subtract 2 cube coords
-function CubeDelta(const A, B: TCubeCoord): TCubeCoord;
-begin
-  Result.X := A.X - B.X;
-  Result.Y := A.Y - B.Y;
-  Result.Z := A.Z - B.Z;
-end;
-
-// Add cube coords
-function CubeAdd(const A, B: TCubeCoord): TCubeCoord;
-begin
-  Result.X := A.X + B.X;
-  Result.Y := A.Y + B.Y;
-  Result.Z := A.Z + B.Z;
-end;
 
 function TTile2Vector(t:TTile):TVector2Integer;
 begin
@@ -170,36 +121,17 @@ begin
   DesignUrl := 'castle-data:/gameviewplay.castle-user-interface';
 end;
 
-function TViewPlay.CreateGroupMoveList:boolean;
-Var gm:TGroupMove;
-    i:integer;
-    SelList:TUnitList;
-    GrUnit:tunit;
-begin
-   result:=false;
-   if assigned(GroupMoveList) then
-    GroupMoveList.Free;
-   if not UnitsOnMap.GroupList.TryGetValue(UnitsOnMap.SelectedGroup,SelList) then exit;
 
-   GroupMoveList:=TGroupMoveList.Create(True);
-   for i := 0 to SelList.Count-1 do
-   begin
-      GrUnit := SelList.Items[i];
-      gm:=TGroupMove.Create;
-      GroupMoveList.Add(gm);
-      gm.OrigUnit:=GrUnit;
-      gm.Delta := CubeDelta(OffsetToCube(GrUnit.TilePosition),OffsetToCube(SelectedUnit.TilePosition));
-   end;
-   result:=true;
-end;
+
 
 procedure TViewPlay.Start;
 
   procedure PlaceInitialUnits;
+  var IsHuman:boolean;
 
     procedure AddUnit(const Kind: TUnitKind; const XBegin, XEnd, YBegin, YEnd: Integer);
     const
-      MaxTries = 50;
+      MaxTries = 1;
     var
       I: Integer;
       Pos: TVector2Integer;
@@ -209,42 +141,71 @@ procedure TViewPlay.Start;
         Since we may play on various map sizes, with various rivers
         --- prepare that the units may not fit, and resign after MaxTries
         from adding a new unit. }
+      Pos.X := XBegin;
+      Pos.Y := YBegin;
+
       for I := 1 to MaxTries do
       begin
-        Pos.X := RandomIntRangeInclusive(XBegin, XEnd);
-        Pos.Y := RandomIntRangeInclusive(YBegin, YEnd);
         if (UnitsOnMap[Pos] = nil) and
            (not UnitsOnMap.IsWater(Pos)) then
         begin
           Un := TUnit.Create(FreeAtStop);
           Un.TilePosition := Pos;
+          Un.Human:= isHuman;
           Un.Initialize(UnitsOnMap, Kind);
           Map.Add(Un.Transform);
           Exit;
         end;
+        Pos.X := RandomIntRangeInclusive(XBegin, XEnd);
+        Pos.Y := RandomIntRangeInclusive(YBegin, YEnd);
+
       end;
     end;
 
   var
-    I, W, H, YBegin, YEnd: Integer;
+    I, W, H, YBegin, YEnd,sx,sy: Integer;
   begin
     W := Map.Data.Width;
     H := Map.Data.Height;
-    YBegin := H div 3;
-    YEnd := H - 1 - H div 3;
-    AddUnit(ukHoplites, 0, 0, 0, 0);
+    YBegin := H div 3 + 10;
+    YEnd := YBegin;
 
-    for I := 0 to 2 do
-      AddUnit(ukAlienHeavy, W div 8 + 0, W div 8 + 0, YBegin, YEnd);
-    for I := 0 to 3 do
-      AddUnit(ukAlienLight, W div 8 + 2, W div 8 + 2, YBegin, YEnd);
-    for I := 0 to 2 do
-      AddUnit(ukHoplites, W - 1 - W div 8 - 0, W - 1 - W div 8 - 0, YBegin, YEnd);
-    for I := 0 to 3 do
-      AddUnit(ukArchers, W - 1 - W div 8 - 2, W - 1 - W div 8 - 2, YBegin, YEnd);
-    for I := 0 to 3 do
-      AddUnit(ukKnights, W - 1 - W div 8 - 3, W - 1 - W div 8 - 1, YBegin, YEnd);
+    sx :=  W div 8 + 0;
+    isHuman := false;
+    AddUnit(ukHoplites, sx, sx, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx, sx, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx, sx, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx, sx, YBegin-4, YEnd-4);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-4, YEnd-4);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-4, YEnd-4);
 
+
+    sx := W - 1 - W div 8 - 4;
+    isHuman := true;
+    AddUnit(ukHoplites, sx, sx, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx, sx, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx, sx, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx, sx, YBegin-4, YEnd-4);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx+1, sx+1, YBegin-4, YEnd-4);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-1, YEnd-1);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-2, YEnd-2);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-3, YEnd-3);
+    AddUnit(ukHoplites, sx+2, sx+2, YBegin-4, YEnd-4);
+
+
+    //AddUnit(ukArchers , sx+2, sx+2, YBegin-1, YEnd-1);
+    //AddUnit(ukArchers , sx+2, sx+2, YBegin-2, YEnd-2);
+    //AddUnit(ukKnights , sx+2, sx+2, YBegin-3, YEnd-3);
+    //AddUnit(ukKnights , sx+2, sx+2, YBegin-4, YEnd-4);
 
 
   end;
@@ -282,7 +243,7 @@ begin
   UpdateTurnStatus;
 
 
-  ViewportMap.camera.Translation:=UnitsOnMap.Units[9].Transform.Position-Vector3(1400,200,0);//Vector3(1200,500,100);
+  ViewportMap.camera.Translation:=UnitsOnMap.Units[UnitsOnMap.UnitsCount-1].Transform.Position-Vector3(1400,200,0);//Vector3(1200,500,100);
   ViewportMap.camera.Orthographic.Height:=1500;
 
   (Viewplay.ViewportMap.Navigation as TCastle2DNavigation).MouseButtonMove:=buttonRight;
@@ -321,20 +282,10 @@ begin
 end;
 
 procedure TViewPlay.ClickEndTurn(Sender: TObject);
-
-  procedure ResetMovement;
-  var
-    I: Integer;
-  begin
-    for I := 0 to UnitsOnMap.UnitsCount - 1 do
-      UnitsOnMap.Units[I].Movement := UnitsOnMap.Units[I].InitialMovement;
-  end;
-
 begin
   HumanTurn := not HumanTurn;
   SelectedUnit := nil;
   SelectedUnitVisualization.Exists := false;
-  ResetMovement;
   UpdateTurnStatus;
 end;
 
@@ -385,7 +336,7 @@ begin
   begin
     Gid:=ord(event.Key)-48;
     UnitsOnMap.DeleteGroup(Gid);//destroys group - empty list from units
-    UnitsOnMap.AddSelectedUnitsToGroup(Gid);//add all selected nunits to this group
+    UnitsOnMap.AddSelectedUnitsToGroup(Gid);//add all selected units to this group
     exit(true);
   end
   else
@@ -409,8 +360,10 @@ begin
       if (SelectedUnit <> nil) and (SelectedUnit=UnitUnderMouse) then //we clicked again
       begin
         SelectedUnit.UnitFacing := SelectedUnit.UnitFacing + 1;
+        UnitsOnMap.SetGroupFacing(SelectedUnit.GroupID,SelectedUnit.UnitFacing);
       end;
       // select new unit
+      ClearSelection;
       SelectedUnit := UnitUnderMouse;
       ShowSelectedUnit;
       UpdateTurnStatus; // SelectedUnit changed
@@ -423,18 +376,18 @@ begin
       if UnitUnderMouse <> nil then
       begin
         // hurt enemy UnitUnderMouse.
-        UnitUnderMouse.Life := UnitUnderMouse.Life - SelectedUnit.Attack;
+        //UnitUnderMouse.Life := UnitUnderMouse.Life - SelectedUnit.Attack;
         // Above operation *maybe* freed and removed enemy from the map,
         // so UnitUnderMouse pointer afterwards is no longer valid.
         UnitUnderMouse := nil;
-        SelectedUnit.Movement := 0;
+        //SelectedUnit.Movement := 0;
         UpdateTurnStatus; // SelectedUnit stats changed
         CheckWin;
       end else
       begin
         // move
         SelectedUnit.MovingPath := DrawPath;
-        //todo:if in group Move all Units
+        UnitsOnMap.MoveGroup;
         UpdateTurnStatus; // SelectedUnit stats changed
         SelectedUnit:=nil;
         SelectedUnitVisualization.Exists := false;
@@ -506,6 +459,8 @@ end;
 procedure TViewPlay.ClearSelection;
 begin
   UnitsOnMap.ClearSelectedUntis;
+  if assigned(UnitsOnMap.GroupMoveList) then
+    freeandnil(UnitsOnMap.GroupMoveList);
 end;
 
 procedure TViewPlay.SelectUnitsInRect(const StartScreen, EndScreen: TVector2);
@@ -584,7 +539,7 @@ begin
   Map.Data.PositionToTile(PosT.XY, TileTarget);
   //TileSpeed := (0 - (getUnitSpeed(TileTarget.X,TileTarget.Y) - MAXSPEED) ) /50 ;
   speedPerSecond := S ;
-  TileSpeed :=  getUnitSpeed(TileTarget.X,TileTarget.Y) /MAXSPEED ;
+  TileSpeed :=  UnitsOnMap.getUnitSpeed(TileTarget.X,TileTarget.Y) /MAXSPEED ;
 
   finalSpeed := speedPerSecond - speedPerSecond * TileSpeed; //MAXSPEED is max cost speed
   direction := PosT - PosS;
@@ -613,49 +568,6 @@ begin
   end;
 end;
 
-function TViewPlay.IsTilePassable(X, Y: Integer): Boolean;
-begin
-
-  Result:= not UnitsOnMap.IsWater(Vector2Integer(X,Y));
-end;
-
-//returns the tilespeed rename this
-function TViewPlay.getUnitSpeed(X, Y: Integer): Integer;
-var
-  TilePosition : TVector2Integer;
-  Tileset: TCastleTiledMapData.TTileset;
-  Frame: Integer;
-  HorizontalFlip, VerticalFlip, DiagonalFlip: Boolean;
-  FrameSpeed:integer;
-begin
-   if not IsTilePassable(X,Y) then
-    exit(0);
-
-   TilePosition := Vector2Integer(X,Y);
-   Map.Data.TileRenderData(TilePosition,
-    Map.Data.Layers[0],
-    Tileset, Frame, HorizontalFlip, VerticalFlip, DiagonalFlip);
-
-  Case Frame of //tiles  the bigger the speed the less passable something is
-  //if framespeed=0 then we have maxspeed
-    0: FrameSpeed := 10;
-    1: FrameSpeed := 20;
-    2: FrameSpeed := 20;
-    3: FrameSpeed := 30;
-    4: FrameSpeed := 40;
-    5: FrameSpeed := MAXSPEED;  //MAXSPEED = no passable  real speed goes to 0
-    6: FrameSpeed := MAXSPEED;
-    7: FrameSpeed := MAXSPEED;
-    8: FrameSpeed := 40;
-    9: FrameSpeed := 30;
-    10: FrameSpeed := MAXSPEED;
-    11: FrameSpeed := MAXSPEED;
-  End;
-
-  Result:= FrameSpeed;
-
-end;
-
 procedure TViewPlay.ClearGroupMove;
 var i:integer;
 begin
@@ -666,6 +578,7 @@ begin
         end;
 end;
 
+//show the group units with a border at the target position
 procedure TViewPlay.DoPaintgroup;
 var i:integer;
     grm:TGroupMove;
@@ -702,12 +615,13 @@ begin
    //selTarg is the last tile of drawpath
    selTargTile:= PathfinderUnit.TTile(DrawPath.First^);
    selTarg:= TTile2Vector(selTargTile);
-   if CreateGroupMoveList then
+   if UnitsOnMap.CreateGroupMoveList(SelectedUnit) then
    begin
-     for i:=0 to GroupMoveList.Count-1 do
+     for i:=0 to UnitsOnMap.GroupMoveList.Count-1 do
      Begin
-       grm:=GroupMoveList[i];
+       grm:=UnitsOnMap.GroupMoveList[i];
        TileVector:=CubeToOffset(CubeAdd(OffsetToCube(selTarg),grm.Delta));
+       grm.TargTile:=TileVector;
        addUnitPlaceHolder;
      End;
    end;
@@ -735,7 +649,7 @@ Begin
     TileImage.URL := 'castle-data:/tile_hover/hexagonal.png';
     TileImage.Translation := Vector3(TileRect.Center, ZHover);
     TileImage.Size := Vector2(TileRect.Width, TileRect.Height);
-    TileImage.Tag:=9;
+    TileImage.Tag:=9;   //tag 9 for painting tiles
     Map.Add(TileImage);
     TileImage.Exists := true;
    // Outputdebugstring(PChar(s));
@@ -821,8 +735,8 @@ begin
     if (SelectedUnit <> nil) and not TVector2Integer.Equals(DrawAtTile,TileUnderMouse) and not TVector2Integer.Equals(SelectedUnit.TilePosition,TileUnderMouse) then
     begin
        pathf := TPathfinder.Create(Selectedunit.TilePosition.X,Selectedunit.TilePosition.Y, TileUnderMouse.X, TileUnderMouse.Y);
-       pathf.OnIsTilePassable := IsTilePassable;
-       pathf.OnGetSpeed := GetUnitSpeed;
+       pathf.OnIsTilePassable := UnitsOnMap.IsTilePassable;
+       pathf.OnGetSpeed := UnitsOnMap.GetUnitSpeed;
        ClearMapPath;
        ClearGroupMove;
        DrawPath := pathf.FindPath;  //list of ttile Records
@@ -860,7 +774,7 @@ begin
   begin
     TileStr := TileUnderMouse.ToString;
     if UnitsOnMap.IsWater(TileUnderMouse) then
-      TileStr := TileStr + NL + ' Water';
+      TileStr := TileStr + NL + ' Not Passable';
     if UnitUnderMouse <> nil then
       TileStr := TileStr + NL + ' Unit: ' + UnitUnderMouse.ToString;
   end else
@@ -870,7 +784,7 @@ begin
     TileStr
   ]);
 
-  {Update moving units}
+  {Update moving units and do Battle}
   tempUList:=TunitList.Create(False);
   try
   for I := 0 to UnitsOnMap.UnitsCount - 1 do
@@ -880,7 +794,13 @@ begin
      except
         break;
      end;
-      if not TVector2Integer.equals(mvUnit.TargetTile,mvUnit.TilePosition) then
+      if mvUnit.OnBattle then
+      begin
+        mvUnit.SecondsPassed:=mvUnit.SecondsPassed+SecondsPassed;
+        mvUnit.DoBattle;
+      end
+      else
+      if mvUnit.isMoving then
       begin //unit is moving
         mvUnit.SecondsPassed:=mvUnit.SecondsPassed+SecondsPassed;
 
@@ -908,6 +828,11 @@ begin
    tempUList.Free;
   end;
 
+  for I := UnitsOnMap.UnitsCount - 1 downto 0 do
+  begin
+    if not UnitsOnMap.Units[I].EndBattle then  //not unit destroyed
+      UnitsOnMap.Units[I].checkBattleNearTile;
+  end;
 
 end;
 

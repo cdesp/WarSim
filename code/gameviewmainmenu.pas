@@ -18,8 +18,12 @@ unit GameViewMainMenu;
 
 interface
 
+
 uses Classes,
   CastleControls, CastleWindow, CastleUIControls;
+
+Const
+  Version = 'Version 0.3';
 
 type
   TViewMainMenu = class(TCastleView)
@@ -28,6 +32,7 @@ type
       These fields will be automatically initialized at Start. }
     ButtonPlayHexagonal: TCastleButton;
     ButtonQuit: TCastleButton;
+    LblVersion: TCastleLabel;
   strict private
     procedure ClickHexagonal(Sender: TObject);
     procedure ClickQuit(Sender: TObject);
@@ -57,6 +62,7 @@ begin
   ButtonPlayHexagonal.OnClick := {$ifdef FPC}@{$endif}ClickHexagonal;
   ButtonQuit.OnClick := {$ifdef FPC}@{$endif}ClickQuit;
   ButtonQuit.Exists := ApplicationProperties.ShowUserInterfaceToQuit;
+  LblVersion.Text.Text := Version;
 end;
 
 procedure TViewMainMenu.ClickHexagonal(Sender: TObject);

@@ -84,7 +84,7 @@
           "TranslationPersistent" : {
             "$$ClassName" : "TCastleVector2Persistent",
             "X" : 1.0000000000000000E+001,
-            "Y" : -1.5919999694824219E+002
+            "Y" : -1.5920001220703125E+002
           },
           "VerticalAnchorParent" : "vpTop",
           "VerticalAnchorSelf" : "vpTop"
@@ -177,6 +177,27 @@
           "VerticalAnchorSelf" : "vpTop"
         }
       ]
+    },
+    {
+      "$$ClassName" : "TCastleLabel",
+      "ColorPersistent" : {
+        "$$ClassName" : "TCastleColorPersistent",
+        "Green" : 7.7254903316497803E-001,
+        "Red" : 1.9607843458652496E-001
+      },
+      "FontSize" : 4.0000000000000000E+001,
+      "Name" : "LblVersion",
+      "Text" : [
+        "Version 0.2"
+      ],
+      "TranslationPersistent" : {
+        "$$ClassName" : "TCastleVector2Persistent",
+        "X" : 1.2800000000000000E+003,
+        "Y" : -7.7820001220703125E+002
+      },
+      "VerticalAlignment" : "vpMiddle",
+      "VerticalAnchorParent" : "vpTop",
+      "VerticalAnchorSelf" : "vpTop"
     }
   ]
 }
