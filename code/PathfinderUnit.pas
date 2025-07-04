@@ -5,6 +5,33 @@ interface
 uses
   classes, System.Generics.Collections, System.SysUtils;
 
+
+
+type
+  T2DIntArray = array[0..5, 0..1] of Integer;
+  P2DIntArray = ^T2DIntArray;
+const
+
+  // Even rows (0, 2, 4, etc.)
+  HexEvenROffsets: T2DIntArray = (
+    (0, +1),    // NorthEast
+    (-1, 0),    // East
+    (0, -1),    // SouthEast
+    (+1, -1),   // SouthWest
+    (+1, 0),    // West
+    (+1, +1)    // NorthWest
+  );
+
+  // Odd rows (1, 3, 5, etc.)
+  HexOddROffsets: T2DIntArray = (
+    (-1, +1),   // NorthEast
+    (-1, 0),    // East
+    (-1, -1),   // SouthEast
+    (0, -1),    // SouthWest
+    (+1, 0),    // West
+    (0, +1)     // NorthWest
+  );
+
 type
   TTile = record
     X, Y: Integer;
@@ -32,12 +59,13 @@ type
   TPathfinder = class
   private
     FStart, FEnd: TTile;
-
   public
     class var
       OnIsTilePassable: TIsTilePassableEvent;
       OnGetSpeed: TGetSpeedEvent;
     class function GetHexDirection(StartPos, TargetPos: TTile): Integer; static;
+    class procedure SortTilesByFacingPriority(var Tiles: TTileArray;
+      const UnitFacing: Integer; const TilePosition: TTile); static;
     class function GetHexTilesAtDistance(const TilePosition: TTile;
       const Distance: Integer): TTileArray; static;
     class function GetHexAdjTiles(Pos: TTile): TTileArray; static;
@@ -51,33 +79,6 @@ function Tile(X, Y:Integer):TTile;
 
 implementation
 uses windows,math;
-
-type
-  T2DIntArray = array[0..5, 0..1] of Integer;
-  P2DIntArray = ^T2DIntArray;
-const
-
-  // Even rows (0, 2, 4, etc.)
-  HexEvenROffsets: T2DIntArray = (
-    (0, +1),    // NorthEast
-    (-1, 0),    // East
-    (0, -1),    // SouthEast
-    (+1, -1),   // SouthWest
-    (+1, 0),    // West
-    (+1, +1)    // NorthWest
-  );
-
-  // Odd rows (1, 3, 5, etc.)
-  HexOddROffsets: T2DIntArray = (
-    (-1, +1),   // NorthEast
-    (-1, 0),    // East
-    (-1, -1),   // SouthEast
-    (0, -1),    // SouthWest
-    (+1, 0),    // West
-    (0, +1)     // NorthWest
-  );
-
-
 
 
 function Tile(X, Y:Integer):TTile;
@@ -120,6 +121,45 @@ begin
   Result.X := X;
   Result.Y := Y;
   Result.Z := Z;
+end;
+
+class procedure TPathfinder.SortTilesByFacingPriority(
+  var Tiles: TTileArray;
+  const UnitFacing: Integer;
+  const TilePosition: TTile
+);
+type
+  TTileWithPriority = record
+    Tile: TTile;
+    Priority: Integer;
+  end;
+var
+  TempList: array of TTileWithPriority;
+  I, J: Integer;
+  Temp: TTileWithPriority;
+begin
+  SetLength(TempList, Length(Tiles));
+
+  // Calculate priorities
+  for I := 0 to High(Tiles) do
+  begin
+    TempList[I].Tile := Tiles[I];
+    TempList[I].Priority := HexFacingDifference(UnitFacing, TilePosition, Tiles[I]);
+  end;
+
+  // Sort using simple bubble sort (replace with quicksort if desired)
+  for I := 0 to High(TempList) - 1 do
+    for J := I + 1 to High(TempList) do
+      if TempList[I].Priority > TempList[J].Priority then
+      begin
+        Temp := TempList[I];
+        TempList[I] := TempList[J];
+        TempList[J] := Temp;
+      end;
+
+  // Write back sorted tiles
+  for I := 0 to High(Tiles) do
+    Tiles[I] := TempList[I].Tile;
 end;
 
 class function TPathfinder.GetHexTilesAtDistance(

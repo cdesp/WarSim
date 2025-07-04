@@ -20,7 +20,7 @@ interface
 
 uses Classes, Contnrs,
   CastleTransform, CastleComponentSerialize, CastleVectors, CastleScene,
-  CastleTiledMap,System.Generics.Collections,PathfinderUnit;
+  CastleTiledMap,System.Generics.Collections,PathfinderUnit,CastleColors,CastleBehaviors ;
 
 type
 
@@ -40,6 +40,19 @@ type
 
   TGroupMoveList=TObjectList<TGroupMove>;
 
+  TFloatingTextNode = class(TCastleTransform)
+  private
+    TextNode: TCastleText;
+    TimeAlive, Lifetime, Speed: Single;
+    UnitFacing: Integer;
+    UnitTilePosition: TVector2Integer;
+    Color:TCastleColor;
+  public
+    constructor Create(AOwner: TComponent; const AText: String; AColor: TCastleColor; ALifetime, ASpeed: Single; AUnitFacing: Integer); reintroduce;
+    procedure Update(const SecondsPassed: Single; var RemoveMe: TRemoveType); override;
+  end;
+
+
   TUnitsOnMap = class(TComponent)
   private
     FItems: array of array of TUnitList;
@@ -50,6 +63,7 @@ type
     procedure GroupUnSelect(GroupID: integer);
     procedure setSelectedGroup(const Value: integer);
     procedure setGroupSelect(GroupID:Integer; V: Boolean);
+    function IsValidPosition(const TilePosition: TVector2Integer): boolean;
   strict private
     FMap: TCastleTiledMap;
     FUnitsCount: Integer;
@@ -111,6 +125,8 @@ type
     function getFacingRatio: Single;
     procedure SetCasualties(const Value: Integer);
     procedure SetRange(const Value: Integer);
+    function IsOtherUnitHere: Boolean;
+    procedure CreateCasualtiesAnimation;
   var
       FBattleWith: TUnit;
       FSecondsPassed: Single;
@@ -133,6 +149,7 @@ type
       FDefense: Integer;
       FRange: Integer;
       ImageIcon: TCastleImageTransform;
+      TextBattle: TCastleText;
       TextAttack: TCastleText;
       TextLife: TCastleText;
       TextMovement: TCastleText;
@@ -216,7 +233,7 @@ const
 implementation
 
 uses SysUtils, TypInfo, Math, windows,GameViewPlay, System.Types,
-  CastleRectangles, CastleStringUtils, CastleColors, CastleViewport;
+  CastleRectangles, CastleStringUtils,  CastleViewport;
 
 {Functions -------------}
 
@@ -259,6 +276,72 @@ begin
   Result.Y := A.Y + B.Y;
   Result.Z := A.Z + B.Z;
 end;
+
+//============TFloatingTextNode===========================
+
+
+
+constructor TFloatingTextNode.Create(AOwner: TComponent; const AText: String; AColor: TCastleColor; ALifetime, ASpeed: Single; AUnitFacing: Integer);
+begin
+  inherited Create(AOwner);
+  Lifetime := ALifetime;
+  Speed := ASpeed;
+  TimeAlive := 0;
+  UnitFacing := AUnitFacing;
+  Color := AColor;
+  //UnitTilePosition := AUnitTilePosition;
+
+  TextNode := TCastleText.Create(Self);
+  TextNode.Text.Add(AText);
+  TextNode.Color := AColor;
+  TextNode.Size := 30;
+ // TextNode.Alignment := haMiddle;
+ // TextNode.VerticalAlignment := vaMiddle;
+  Add(TextNode);
+end;
+
+
+
+Const UpwardSpeed=10;
+
+procedure TFloatingTextNode.Update(const SecondsPassed: Single; var RemoveMe: TRemoveType);
+var
+  AngleRad: Single;
+  FadeFactor: Single;
+  HalfLife: Single;
+  Drift: TVector3;
+begin
+  inherited;
+  HalfLife := Lifetime / 2;
+
+ // Compute drift direction
+  AngleRad := DegToRad(UnitFacing * 60 + 30);
+  Drift := Vector3(-Sin(AngleRad), Cos(AngleRad), 0); // Z = 0 to keep depth stable
+
+
+  Drift := Drift.Normalize * Speed;
+
+  Translation := Translation + Vector3(Drift.X , Drift.Y , 0) * SecondsPassed;
+
+
+  TimeAlive := TimeAlive + SecondsPassed;
+
+  if TimeAlive < HalfLife then
+    FadeFactor := 1.0  // fully visible, no fade
+  else
+    FadeFactor := 1.0 - ((TimeAlive - HalfLife) / HalfLife); // fade from 1 to 0 during second half
+
+  // Clamp to [0..1]
+  if FadeFactor < 0 then
+    FadeFactor := 0;
+
+
+  TextNode.Color := Vector4( Color.X, Color.Y, Color.Z, FadeFactor);
+
+  if TimeAlive >= Lifetime then
+    RemoveMe:=rtRemoveAndFree;
+end;
+
 
 { TUnitsOnMap ---------------------------------------------------------------- }
 
@@ -459,9 +542,15 @@ begin
   inherited;
 end;
 
+function TUnitsOnMap.IsValidPosition(const TilePosition: TVector2Integer):boolean;
+begin
+  Result:=(TilePosition.X>-1) and (TilePosition.Y>-1) and
+       (TilePosition.X<Map.Map.Width) and (TilePosition.Y<Map.Map.Height);
+end;
+
 function TUnitsOnMap.GetUnitOnMap(const TilePosition: TVector2Integer): TUnit;
 begin
-  if FItems[TilePosition.X, TilePosition.Y].Count>0 then
+  if IsValidPosition(TilePosition) and (FItems[TilePosition.X, TilePosition.Y].Count>0) then
     Result := FItems[TilePosition.X, TilePosition.Y].Items[0] //return by default the first object
   else
    Result := nil;
@@ -560,6 +649,9 @@ begin
   TextLife := FindRequiredComponent('TextLife') as TCastleText;
   TextMovement := FindRequiredComponent('TextMovement') as TCastleText;
   SelBox := FindRequiredComponent('SelBox') as TCastleBox;
+  TextBattle := FindRequiredComponent('TextBattle') as TCastleText;
+
+  TextBattle.Visible:=false;
 
   FGroupID:=-1;
   UnitFacing:=0;
@@ -710,18 +802,17 @@ begin
      //max casualties 20 every 2 secs
      attpwr := AttackPower * FacingRatio;
      defpwr := BattleWith.DefensePower * BattleWith.FacingRatio;
-     BattleWith.Casualties :=  Round(20 * (attpwr/defpwr));
+     BattleWith.Casualties := BattleWith.Casualties + Round(20 * (attpwr/defpwr));
   end;
 end;
 
 procedure TUnit.checkBattleNearTile;
-Var TileArray,TileArray2:TTilearray;
+Var TileArray:TTilearray;
     i:Integer;
     un:TUnit;
 begin
    TileArray := TPathFinder.GetHexTilesAtDistance(Vector2TTile(TilePosition),1);
-   TileArray2 := TPathFinder.GetHexAdjTiles(Vector2TTile(TilePosition));
-   i:= TileArray2[0].x;
+   TPathFinder.SortTilesByFacingPriority(TileArray,UnitFacing,Vector2TTile(TilePosition)); //sort by facing first
    for i := 0 to Length(TileArray)-1 do
    Begin
      un := UnitsOnmap.Items[TTile2Vector(TileArray[i])];
@@ -733,13 +824,26 @@ begin
         exit;
      end;
    End;
+end;
 
+procedure TUnit.CreateCasualtiesAnimation;
+var
+  FloatingText: TFloatingTextNode;
+  s:string;
+begin
+  s:=inttostr(Casualties);
+  FloatingText := TFloatingTextNode.Create(UnitsOnMap.map, s, HexToColor('30012a'), 2.5, 85.0,UnitFacing);
+  FloatingText.Translation := Transform.Translation + Vector3(0, 0, 40); // slightly above the unit
+  unitsonmap.map.add(FloatingText);
 end;
 
 //returns true if unit is destroyed
 Function TUnit.EndBattle:boolean;
 begin
+   if casualties=0 then exit;
+   
    FUnits := FUnits - Casualties;
+   CreateCasualtiesAnimation;
    Casualties := 0;
    Result := FUnits <= 0 ;
    if not Result then
@@ -767,6 +871,7 @@ begin
   //set our unit as battled to the enemy unit if it is not fighting yet
   if assigned(FBattleWith) and (FBattleWith.BattleWith=nil) then
     FBattleWith.BattleWith:=Self;
+  TextBattle.Visible:=Assigned(FBattleWith);
 end;
 
 procedure TUnit.SetCasualties(const Value: Integer);
@@ -821,6 +926,7 @@ begin
 end;
 
 procedure TUnit.Notification(AComponent: TComponent; Operation: TOperation);
+var EnemyPosition:TVector2Integer;
 begin
   inherited;
   if (Operation = opRemove) and (AComponent = FUnitsOnMap) then
@@ -828,8 +934,14 @@ begin
     UnitsOnMap := nil;
   if (Operation = opRemove) and (AComponent = FBattleWith) then
   Begin
-   FBattleWith:=nil;  //Our Enemy is gone
+   EnemyPosition:=BattleWith.TilePosition;
+   BattleWith:=nil;  //Our Enemy is gone
    checkBattleNearTile; //Find Another
+   if not OnBattle then
+   begin
+      TargetTile:=EnemyPosition;
+   end
+   else
    if not OnBattle and HasMovement then
     PathReached;  //continue moving
   End;
@@ -955,6 +1067,11 @@ begin
  result := not OnBattle and not TVector2Integer.equals(TargetTile,TilePosition);
 end;
 
+function TUnit.IsOtherUnitHere:Boolean;
+begin
+   result:=UnitsOnMap.UnitsOnTile(TilePosition).Count>1;
+end;
+
 //Current waypoint reached
 procedure TUnit.PathReached;
 var tile:TTile;
@@ -964,10 +1081,16 @@ begin
    begin
      tile:=PathfinderUnit.TTile(MovingPath.Items[MovingPath.Count-1]^);
      UnOnTarg:=UnitsOnMap.Items[Vector2Integer(tile.X,tile.Y)];
-     if (UnOnTarg<>nil) and (UnOnTarg.Human<>Human) then //do Battle
+     //check if other unit of ours occupy this tile
+     if (UnOnTarg<>nil) and (UnOnTarg.Human<>Human) then
      begin
-       BattleWith := UnOnTarg;
-       FTargetTile := TilePosition; //no Movement
+       if not IsOtherUnitHere then //do Battle
+       begin
+         BattleWith := UnOnTarg;
+         FTargetTile := TilePosition; //no Movement
+       end
+       else
+        checkValidTile; //move to a new tile
      end
      else
      begin
@@ -1042,22 +1165,22 @@ begin
 
   case FUnitFacing of
    0:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(30));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(30));    //NW
      end;
    1:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(90));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(90));   //W
      end;
    2:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(150));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(150));  //SW
      end;
    3:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(210));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(210));  //SE
      end;
    4:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(270));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(270));  //E
      end;
    5:begin
-       FaceRotation:=Vector4(0, 0, 1, DegToRad(330));
+       FaceRotation:=Vector4(0, 0, 1, DegToRad(330));  //NE
      end;
   end;
 
@@ -1069,6 +1192,9 @@ end;
 
 initialization
 
+
 finalization
   FreeAndNil(TUnit.TransformTemplate);
+
+
 end.

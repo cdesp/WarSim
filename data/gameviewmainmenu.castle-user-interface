@@ -7,8 +7,9 @@
       "$$ClassName" : "TCastleImageControl",
       "Content" : {
         "$$ClassName" : "TCastleImagePersistent",
-        "Url" : "castle-data:/images/main_menu_background/siege.png"
+        "Url" : "castle-data:/images/main_menu_background/hoplites.jpg"
       },
+      "FullSize" : true,
       "Height" : 1.0000000000000000E+001,
       "HorizontalAnchorParent" : "hpMiddle",
       "HorizontalAnchorSelf" : "hpMiddle",

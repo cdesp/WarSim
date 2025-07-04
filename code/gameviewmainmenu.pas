@@ -23,7 +23,7 @@ uses Classes,
   CastleControls, CastleWindow, CastleUIControls;
 
 Const
-  Version = 'Version 0.3';
+  Version = 'Version 0.31';
 
 type
   TViewMainMenu = class(TCastleView)

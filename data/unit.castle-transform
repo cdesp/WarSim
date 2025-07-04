@@ -121,6 +121,32 @@
         "Y" : 2.2000000000000000E+002,
         "Z" : 1.0000000000000000E+000
       }
+    },
+    {
+      "$$ClassName" : "TCastleText",
+      "ColorPersistent" : {
+        "$$ClassName" : "TCastleColorPersistent",
+        "Blue" : 8.2352943718433380E-002,
+        "Green" : 7.4509806931018829E-002
+      },
+      "Name" : "TextBattle",
+      "RenderOptions" : {
+        "$$ClassName" : "TCastleScene.TSceneRenderOptions"
+      },
+      "RotationPersistent" : {
+        "$$ClassName" : "TCastleVector4RotationPersistent",
+        "Z" : 1.0000000000000000E+000
+      },
+      "Size" : 4.0000000000000000E+001,
+      "Text" : [
+        "B"
+      ],
+      "TranslationPersistent" : {
+        "$$ClassName" : "TCastleVector3Persistent",
+        "X" : 6.8264602661132812E+001,
+        "Y" : 3.5503383636474609E+001,
+        "Z" : 2.0000000000000000E+001
+      }
     }
   ]
 }

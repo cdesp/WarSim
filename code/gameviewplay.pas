@@ -346,6 +346,12 @@ begin
       ClearSelection;
       UnitsOnMap.SelectedGroup:=Gid;
       exit(true);
+   end
+   else  if event.KeyCharacter='a' then
+   begin
+      unitsonmap.Units[2].Casualties:=13;
+      unitsonmap.Units[2].EndBattle;
+      unitsonmap.Units[2].Units:=200;
    end;
 
 
@@ -618,12 +624,12 @@ begin
    if UnitsOnMap.CreateGroupMoveList(SelectedUnit) then
    begin
      for i:=0 to UnitsOnMap.GroupMoveList.Count-1 do
-     Begin
+     begin
        grm:=UnitsOnMap.GroupMoveList[i];
        TileVector:=CubeToOffset(CubeAdd(OffsetToCube(selTarg),grm.Delta));
        grm.TargTile:=TileVector;
        addUnitPlaceHolder;
-     End;
+     end;
    end;
 end;
 
