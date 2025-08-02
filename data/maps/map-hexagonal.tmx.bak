@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="24" height="20" tilewidth="172" tileheight="190" infinite="0" hexsidelength="96" staggeraxis="y" staggerindex="odd" nextlayerid="3" nextobjectid="1">
- <tileset firstgid="1" source="mytileset.tsx"/>
+ <tileset firstgid="1" source="../../../../Castle Game Engine/examples/tiled/strategy_game_demo/data/maps/mytileset.tsx"/>
  <layer id="2" name="Tile Layer 1" width="24" height="20">
   <data encoding="csv">
 1,1,1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,

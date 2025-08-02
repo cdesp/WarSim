@@ -114,15 +114,11 @@ begin
   result:=Tile(v.X,v.Y);
 end;
 
-
 constructor TViewPlay.Create(AOwner: TComponent);
 begin
   inherited;
   DesignUrl := 'castle-data:/gameviewplay.castle-user-interface';
 end;
-
-
-
 
 procedure TViewPlay.Start;
 
@@ -147,7 +143,7 @@ procedure TViewPlay.Start;
       for I := 1 to MaxTries do
       begin
         if (UnitsOnMap[Pos] = nil) and
-           (not UnitsOnMap.IsWater(Pos)) then
+           (not UnitsOnMap.TileIsBlocked(Pos)) then
         begin
           Un := TUnit.Create(FreeAtStop);
           Un.TilePosition := Pos;
@@ -324,6 +320,7 @@ function TViewPlay.Press(const Event: TInputPressRelease): Boolean;
   end;
 
 var Gid:integer;
+    TempGroup:Boolean;
 begin
   Result := inherited;
   if Result then Exit;
@@ -369,7 +366,7 @@ begin
         UnitsOnMap.SetGroupFacing(SelectedUnit.GroupID,SelectedUnit.UnitFacing);
       end;
       // select new unit
-      ClearSelection;
+     // ClearSelection;
       SelectedUnit := UnitUnderMouse;
       ShowSelectedUnit;
       UpdateTurnStatus; // SelectedUnit changed
@@ -392,8 +389,22 @@ begin
       end else
       begin
         // move
-        SelectedUnit.MovingPath := DrawPath;
+        if Assigned(DrawPath) and (DrawPath.Count>0) then
+           SelectedUnit.MovingPath := DrawPath;
+        TempGroup:=false;
+        if selectedUnit.Selected and (selectedUnit.GroupID=-1) then
+        begin
+          UnitsOnMap.AddSelectedUnitsToGroup(999); //temp group
+          UnitsOnmap.SelectedGroup:=999;
+          UnitsOnMap.CreateGroupMoveList(selectedUnit);
+          TempGroup:=true;
+        end;
         UnitsOnMap.MoveGroup;
+        if TempGroup then
+        begin
+          UnitsOnMap.DeleteGroup(999);
+          UnitsOnmap.SelectedGroup:=-1;
+        end;
         UpdateTurnStatus; // SelectedUnit stats changed
         SelectedUnit:=nil;
         SelectedUnitVisualization.Exists := false;
@@ -500,7 +511,9 @@ begin
   begin
     myUnit := UnitsOnMap.Units[i];
     UnitWorldPos := myUnit.Transform.Translation; // or Unit.TileToWorld(...) if needed
-    myUnit.Selected :=SelectionContainsUnit;
+    myUnit.Selected :=SelectionContainsUnit and (myunit.Human=HumanTurn);
+    if not assigned(SelectedUnit) and myUnit.Selected then
+      SelectedUnit:=myUnit;
   end;
 end;
 
@@ -548,6 +561,8 @@ begin
   TileSpeed :=  UnitsOnMap.getUnitSpeed(TileTarget.X,TileTarget.Y) /MAXSPEED ;
 
   finalSpeed := speedPerSecond - speedPerSecond * TileSpeed; //MAXSPEED is max cost speed
+  //temp
+  finalspeed := finalSpeed * 2;
   direction := PosT - PosS;
 
   if direction.Length <= 1 then
@@ -602,7 +617,7 @@ var i:integer;
        TileImage.Translation := Vector3(TileRect.Center, ZHover);
        TileImage.Size := Vector2(TileRect.Width, TileRect.Height);
        TileImage.Tag:=8;
-       if (grm.OrigUnit<>SelectedUnit) and UnitsOnMap.IsWater(TileVector) then     //check if tile is valid
+       if (grm.OrigUnit<>SelectedUnit) and UnitsOnMap.TileIsBlocked(TileVector) then     //check if tile is valid
         TileImage.Color:=HexToColor('FF3333')
        else if (grm.OrigUnit<>SelectedUnit) then
          TileImage.Color:=HexToColor('66FF66')
@@ -674,6 +689,7 @@ begin
         end;
 end;
 
+
 procedure TViewPlay.Update(const SecondsPassed: Single;
   var HandleInput: boolean);
 const
@@ -740,12 +756,9 @@ begin
     //paint path to tileundermouse
     if (SelectedUnit <> nil) and not TVector2Integer.Equals(DrawAtTile,TileUnderMouse) and not TVector2Integer.Equals(SelectedUnit.TilePosition,TileUnderMouse) then
     begin
-       pathf := TPathfinder.Create(Selectedunit.TilePosition.X,Selectedunit.TilePosition.Y, TileUnderMouse.X, TileUnderMouse.Y);
-       pathf.OnIsTilePassable := UnitsOnMap.IsTilePassable;
-       pathf.OnGetSpeed := UnitsOnMap.GetUnitSpeed;
        ClearMapPath;
        ClearGroupMove;
-       DrawPath := pathf.FindPath;  //list of ttile Records
+       DrawPath:=UnitsOnMap.FindAPath(Selectedunit.TilePosition,TileUnderMouse);
        if assigned(DrawPath) and (DrawPath.Count>0) then
        begin
         DrawAtTile :=  TileUnderMouse;
@@ -753,8 +766,11 @@ begin
         if SelectedUnit.InGroup then
           DoPaintgroup;
        end
-       else DrawAtTile:= TVector2Integer.Zero;
-       pathf.Free;
+       else
+       begin
+         if assigned(DrawPath) then freeandnil(DrawPath); //cause count=0
+         DrawAtTile:= TVector2Integer.Zero;
+       end;
     end;
   end else
     UnitUnderMouse := nil;
@@ -779,7 +795,7 @@ begin
   if TileUnderMouseExists then
   begin
     TileStr := TileUnderMouse.ToString;
-    if UnitsOnMap.IsWater(TileUnderMouse) then
+    if UnitsOnMap.TileIsBlocked(TileUnderMouse) then
       TileStr := TileStr + NL + ' Not Passable';
     if UnitUnderMouse <> nil then
       TileStr := TileStr + NL + ' Unit: ' + UnitUnderMouse.ToString;
@@ -808,6 +824,9 @@ begin
       else
       if mvUnit.isMoving then
       begin //unit is moving
+        if TVector2Integer.Equals(mvUnit.TilePosition,mvUnit.TargetTile) then
+          mvUnit.PathReached;//try to go to next tile
+
         mvUnit.SecondsPassed:=mvUnit.SecondsPassed+SecondsPassed;
 
         R := UnitsOnMap.Map.TileRectangle(mvUnit.TargetTile);
@@ -823,12 +842,15 @@ begin
                    end;
          end;
 
-      end;
+      end
+      else if mvUnit.HasMovement then
+          mvUnit.PathReached;//check next move
   end;
    for mvUnit in tempUList do
    Begin
       mvUnit.TilePosition:=mvUnit.TargetTile;
-      mvUnit.PathReached;
+      if mvUnit.HasMovement then
+         mvUnit.PathReached;
    End;
   finally
    tempUList.Free;
@@ -836,8 +858,15 @@ begin
 
   for I := UnitsOnMap.UnitsCount - 1 downto 0 do
   begin
-    if not UnitsOnMap.Units[I].EndBattle then  //not unit destroyed
-      UnitsOnMap.Units[I].checkBattleNearTile;
+    mvUnit:=UnitsOnMap.Units[I];
+    if not mvUnit.EndBattle then  //not unit destroyed
+    begin
+      mvUnit.checkBattleNearTile;
+      if not mvunit.IsMoving and mvUnit.HasMovement then
+         mvUnit.PathReached;//check next move
+      if not mvunit.IsMoving and mvUnit.IsOtherUnitHere then
+        mvUnit.checkValidTile;
+    end;
   end;
 
 end;

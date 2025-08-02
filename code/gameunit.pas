@@ -20,7 +20,7 @@ interface
 
 uses Classes, Contnrs,
   CastleTransform, CastleComponentSerialize, CastleVectors, CastleScene,
-  CastleTiledMap,System.Generics.Collections,PathfinderUnit,CastleColors,CastleBehaviors ;
+  CastleTiledMap,Generics.Defaults,System.Generics.Collections,PathfinderUnit,CastleColors,CastleBehaviors ;
 
 type
 
@@ -59,11 +59,14 @@ type
     FUnits: TComponentList;
     FGroupList:TGroupList;
     FSelectedGroup:integer;
+    UnitID:Integer;
+    fGroupMoveList: TGroupMoveList;
     procedure GroupSelect(GroupID: integer);
     procedure GroupUnSelect(GroupID: integer);
     procedure setSelectedGroup(const Value: integer);
     procedure setGroupSelect(GroupID:Integer; V: Boolean);
     function IsValidPosition(const TilePosition: TVector2Integer): boolean;
+    procedure SortGroupMoveList(var AGroupMoveList: TGroupMoveList);
   strict private
     FMap: TCastleTiledMap;
     FUnitsCount: Integer;
@@ -71,7 +74,7 @@ type
     function GetUnits(const Index: Integer): TUnit;
     procedure SetUnitsCount(const AValue: Integer);
   public
-    GroupMoveList:TGroupMoveList; //all group units relative to selected
+    property GroupMoveList:TGroupMoveList read fGroupMoveList; //all group units relative to selected
     constructor Create(const AOwner: TComponent;
       const AMap: TCastleTiledMap); reintroduce;
     destructor Destroy; override;
@@ -86,6 +89,7 @@ type
       In other words, changes to TUnit are automatically reflected here. }
     property Items[const TilePosition: TVector2Integer]: TUnit read GetUnitOnMap; default;
 
+    function TileOccupied(tile:TVector2Integer):boolean;
     function UnitsCount: Integer;
     function UnitsOnTile(const TilePosition: TVector2Integer):TUnitList;
     function NewGroup(GID:Integer):TUnitList;
@@ -96,12 +100,17 @@ type
     property Map: TCastleTiledMap read FMap;
     property GroupList:TGroupList read FGroupList;
     property SelectedGroup:integer read FSelectedGroup write setSelectedGroup;
-    function IsWater(const TilePosition: TVector2Integer): Boolean;
+    function TileIsBlocked(const TilePosition: TVector2Integer;
+      IncUnits: boolean=True): boolean;
+    function IsTilePassable(const TilePosition: TVector2Integer): Boolean;overload;
+    function IsTilePassable(X, Y: Integer): Boolean;overload;
     function CreateGroupMoveList(SelectedUnit:TUnit): boolean;
     procedure MoveGroup;
     procedure SetGroupFacing(Gid, UFace: Integer);
-    function IsTilePassable(X, Y: Integer): Boolean;
+
     function getUnitSpeed(X, Y: Integer): Integer;
+    function FindAPath(StartTile,TargTile:TVector2Integer):TList;
+    function GetNextId:integer;
   end;
 
   TUnit = class(TComponent)
@@ -110,7 +119,6 @@ type
       TransformTemplate: TCastleComponentFactory;
     procedure SetMovingPath(const Value: TList);
     function getFacingToTarget: Integer;
-    procedure checkValidTile;
     function IsInGroup: Boolean;
     function getGroupID: Integer;
     procedure setGroupID(const Value: Integer);
@@ -125,8 +133,9 @@ type
     function getFacingRatio: Single;
     procedure SetCasualties(const Value: Integer);
     procedure SetRange(const Value: Integer);
-    function IsOtherUnitHere: Boolean;
     procedure CreateCasualtiesAnimation;
+    procedure ClearMovingPath;
+    function GetPathTarget: TVector2Integer;
   var
       FBattleWith: TUnit;
       FSecondsPassed: Single;
@@ -137,6 +146,7 @@ type
       FUnitFacingSave: Integer;
       FGroupID: Integer;
       FCasualties:Integer;
+      FID: Integer;
       procedure SetSecondsPassed(const Value: Single);
       procedure SetSpeed(const Value: Integer);
       procedure SetTargetTile(const Value: TVector2Integer);
@@ -192,10 +202,14 @@ type
     procedure DoBattle;
     function EndBattle: boolean;
     procedure checkBattleNearTile;
+    function TileOccupied(Tile:TVector2Integer):boolean;
+    function IsOtherUnitHere: Boolean;
+    procedure checkValidTile;
 
     property SecondsPassed: Single read FSecondsPassed write SetSecondsPassed;
     property TargetTile: TVector2Integer read FTargetTile write SetTargetTile;
     property MovingPath:TList read FMovingPath write SetMovingPath;
+    property PathTarget: TVector2Integer read GetPathTarget;
     property InGroup:Boolean read IsInGroup;
     property SpeedGroup:Integer read FSpeedGroup write SetSpeedGroup; //the speed of the group
     //======== Battle Properties
@@ -219,7 +233,7 @@ type
     property Defense: Integer read FDefense; //the defense of each unit
     property Speed: Integer read GetSpeed write SetSpeed;
     Property Range: Integer read FRange write SetRange; // how far can we attack
-
+    Property ID:Integer read FID;
   end;
 
   function CubeToOffset(const C: TCubeCoord): TVector2Integer;forward;
@@ -345,6 +359,108 @@ end;
 
 { TUnitsOnMap ---------------------------------------------------------------- }
 
+// Helper function for calculating distance based on your TCubeCoord and OffsetToCube
+function GetDistance(const Tile1, Tile2: TVector2Integer): Single;
+var
+  Cube1, Cube2: TCubeCoord;
+  dx, dy, dz: Integer;
+begin
+  Cube1 := OffsetToCube(Tile1);
+  Cube2 := OffsetToCube(Tile2);
+
+  dx := Abs(Cube1.X - Cube2.X);
+  dy := Abs(Cube1.Y - Cube2.Y);
+  dz := Abs(Cube1.Z - Cube2.Z);
+
+  Result := (dx + dy + dz) / 2.0; // Use 2.0 to ensure float division
+end;
+
+
+procedure TUnitsOnMap.SortGroupMoveList(var AGroupMoveList: TGroupMoveList);
+var
+  ListToSort: TGroupMoveList;
+  MostRightTargetCube: TCubeCoord;
+  MostRightTargetFound: Boolean;
+  CurrentTargetCube: TCubeCoord;
+  GroupCentralTarget: TVector2Integer;
+  i: Integer;
+  gm: TGroupMove;
+begin
+  // Determine which list to use based on the parameter
+  if AGroupMoveList = nil then
+  begin
+    // Use the global/class member list if the parameter is nil
+    // Make sure FGlobalGroupMoveList is correctly populated before calling with nil.
+    ListToSort := FGroupMoveList;
+  end
+  else
+  begin
+    // Otherwise, use the list passed as a parameter
+    ListToSort := AGroupMoveList;
+  end;
+
+  // --- Validation ---
+  if ListToSort = nil then
+  begin
+    // This should ideally not happen if FGlobalGroupMoveList is properly managed
+    // or if AGroupMoveList is always passed as non-nil.
+    Exit;
+  end;
+  if ListToSort.Count = 0 then
+  begin
+    // Nothing to sort.
+    Exit;
+  end;
+
+  // 1. Determine the "most right" target tile among all calculated TargTile values
+  // Initialize MostRightTargetCube with the first unit's target
+  MostRightTargetCube := OffsetToCube(ListToSort.Items[0].TargTile);
+  MostRightTargetFound := True; // List is not empty, so a target is found
+
+  for i := 1 to ListToSort.Count - 1 do // Start from 1 as 0 is used for initialization
+  begin
+    CurrentTargetCube := OffsetToCube(ListToSort.Items[i].TargTile);
+
+    // Compare by X (Q) for "most right"
+    if CurrentTargetCube.X > MostRightTargetCube.X then
+    begin
+      MostRightTargetCube := CurrentTargetCube;
+    end
+    // Tie-breaker: If X (Q) values are equal, prefer the one with a higher Z (R) value
+    // This typically means "more down-right" for flat-top hexes.
+    // Adjust `CurrentTargetCube.Z > MostRightTargetCube.Z` to `<` if you prefer "more up-right"
+    else if (CurrentTargetCube.X = MostRightTargetCube.X) then
+    begin
+      if CurrentTargetCube.Z > MostRightTargetCube.Z then
+        MostRightTargetCube := CurrentTargetCube;
+    end;
+  end;
+
+  // Convert the most right cube coordinate back to offset for the sorting comparison
+  GroupCentralTarget := CubeToOffset(MostRightTargetCube);
+
+
+  // 2. Sort the ListToSort based on distance from OrigUnit.TilePosition to GroupCentralTarget
+  ListToSort.Sort(TComparer<TGroupMove>.Construct(
+    function(const L, R: TGroupMove): Integer
+    var
+      DistL, DistR: Single;
+    begin
+      // Calculate the distance from each unit's *original position*
+      // to the *calculated "most right" group target*.
+      DistL := GetDistance(L.OrigUnit.TilePosition, GroupCentralTarget);
+      DistR := GetDistance(R.OrigUnit.TilePosition, GroupCentralTarget);
+
+      if DistL < DistR then
+        Result := -1 // L comes before R (closer to target)
+      else if DistL > DistR then
+        Result := 1  // R comes before L
+      else
+        Result := 0; // Distances are equal
+    end
+  ));
+end;
+
 //creates a TGroupMoveList containing the relpos of the target position for each group unit
 function TUnitsOnMap.CreateGroupMoveList(SelectedUnit:TUnit):boolean;
 Var gm:TGroupMove;
@@ -357,7 +473,7 @@ begin
     GroupMoveList.Free;
    if not GroupList.TryGetValue(SelectedGroup,SelList) then exit;
 
-   GroupMoveList:=TGroupMoveList.Create(True);
+   FGroupMoveList:=TGroupMoveList.Create(True);
    for i := 0 to SelList.Count-1 do
    begin
       GrUnit := SelList.Items[i];
@@ -365,7 +481,11 @@ begin
       GroupMoveList.Add(gm);
       gm.OrigUnit:=GrUnit;
       gm.Delta := CubeDelta(OffsetToCube(GrUnit.TilePosition),OffsetToCube(SelectedUnit.TilePosition));
+      if selectedUnit.IsMoving then
+       gm.TargTile:=CubeToOffset(CubeAdd(OffsetToCube(selectedUnit.PathTarget),gm.Delta));
    end;
+   //todo:Sort this so first goes the unit that is closer to the nearest target of the group
+   SortGroupMoveList(FGroupMoveList);
    result:=true;
 end;
 
@@ -376,7 +496,6 @@ var
   i: Integer;
   TileVector:TVector2Integer;
   grm:TGroupMove;
-  pathf : TPathfinder;
   NewPath:TList;
 begin
   if not assigned(GroupMoveList) then exit;
@@ -387,15 +506,13 @@ begin
      grm:=GroupMoveList[i];
      TileVector:=grm.TargTile;
 
-      pathf := TPathfinder.Create(grm.OrigUnit.TilePosition.X,grm.OrigUnit.TilePosition.Y, grm.TargTile.X, grm.TargTile.Y);
-      pathf.OnIsTilePassable := IsTilePassable;
-      pathf.OnGetSpeed := GetUnitSpeed;
-      NewPath := pathf.FindPath;  //list of ttile Records
+      NewPath:=FindAPath(grm.OrigUnit.TilePosition,grm.TargTile);
       if assigned(NewPath) and (NewPath.Count>0) then
       Begin
         if not assigned(grm.OrigUnit.MovingPath) then //the selected unit laready has a moving path
-        grm.OrigUnit.MovingPath := NewPath;
-      End;
+         grm.OrigUnit.MovingPath := NewPath;
+      End
+      else NewPath.Free;
   end;
 end;
 
@@ -459,7 +576,7 @@ end;
 
 function TUnitsOnMap.IsTilePassable(X, Y: Integer): Boolean;
 begin
-  Result:= not IsWater(Vector2Integer(X,Y));
+  Result:= not IsTilePassable(Vector2Integer(X,Y));
 end;
 
 
@@ -472,10 +589,10 @@ var
   HorizontalFlip, VerticalFlip, DiagonalFlip: Boolean;
   FrameSpeed:integer;
 begin
-   if not IsTilePassable(X,Y) then
-    exit(0);
-
    TilePosition := Vector2Integer(X,Y);
+  // if TileIsBlocked(TilePosition,false) then
+  //  exit(0);
+
    Map.Data.TileRenderData(TilePosition,
     Map.Data.Layers[0],
     Tileset, Frame, HorizontalFlip, VerticalFlip, DiagonalFlip);
@@ -513,6 +630,7 @@ begin
        FItems[i,j]:= TUnitlist.Create(False);
   FUnits := TComponentList.Create(false);
   FGroupList:=TGroupList.Create();
+  UnitID:=0;
 end;
 
 procedure TUnitsOnMap.ClearSelectedUntis;
@@ -542,10 +660,31 @@ begin
   inherited;
 end;
 
+function TUnitsOnMap.FindAPath(StartTile, TargTile: TVector2Integer): TList;
+var pathf : TPathfinder;
+begin
+       pathf := TPathfinder.Create(Vector2TTile(StartTile),Vector2TTile(TargTile));
+       try
+         pathf.OnIsTilePassable := IsTilePassable;
+         pathf.OnGetSpeed := GetUnitSpeed;
+       finally
+          result := pathf.FindPath;  //list of ttile Records
+          pathf.Free;
+       end;
+end;
+
+
 function TUnitsOnMap.IsValidPosition(const TilePosition: TVector2Integer):boolean;
 begin
   Result:=(TilePosition.X>-1) and (TilePosition.Y>-1) and
        (TilePosition.X<Map.Map.Width) and (TilePosition.Y<Map.Map.Height);
+end;
+
+
+function TUnitsOnMap.GetNextId: integer;
+begin
+  inc(UnitID);
+  result:=UnitID;
 end;
 
 function TUnitsOnMap.GetUnitOnMap(const TilePosition: TVector2Integer): TUnit;
@@ -569,7 +708,11 @@ end;
 function TUnitsOnMap.UnitsOnTile(
   const TilePosition: TVector2Integer): TUnitList;
 begin
+  try
    Result := FItems[TilePosition.X, TilePosition.Y];
+  except
+     Result:=TUnitList.Create;
+  end;
 end;
 
 procedure TUnitsOnMap.SetUnitsCount(const AValue: Integer);
@@ -578,7 +721,19 @@ begin
   FUnitsCount := AValue;
 end;
 
-function TUnitsOnMap.IsWater(const TilePosition: TVector2Integer): Boolean;
+function TUnitsOnMap.TileOccupied(tile: TVector2Integer): boolean;
+var i:integer;
+begin
+  result := false;
+  for i := 0 to UnitsCount-1 do
+  begin
+   result := result or (Units[i].TileOccupied(tile) and not Units[i].IsMoving);
+   if result then break;
+  end;
+end;
+
+//returns true if tile is NOT Passable
+function TUnitsOnMap.TileIsBlocked(const TilePosition: TVector2Integer;IncUnits:boolean=True):boolean;
 var
   Tileset: TCastleTiledMapData.TTileset;
   Frame: Integer;
@@ -594,8 +749,16 @@ begin
     {inpassable is 6}
         (Frame in [5,6,7,10,11]);
 
+   if IncUnits then
+     Result := Result or TileOccupied(TilePosition);//no pass over other units
     { Water is on 1, 5, 9 tiles (counting from 0) in data/maps/tileset-terrain.png . }
 //    ((Frame mod 4) = 1);
+end;
+
+//for event Only
+function TUnitsOnMap.IsTilePassable(const TilePosition: TVector2Integer): Boolean;
+begin
+  Result:=TileIsBlocked(TilePosition);
 end;
 
 function TUnitsOnMap.NewGroup(GID:Integer): TUnitList;
@@ -613,6 +776,14 @@ begin
 end;
 
 { TUnit ----------------------------------------------------------------------- }
+
+function TUnit.GetPathTarget: TVector2Integer;
+begin
+  if assigned(MovingPath) and (MovingPath.Count>0) then
+   Result:=TVector2Integer(MovingPath.Items[0]^)
+  else
+   Result:=TargetTile;
+end;
 
 function TUnit.GetSpeed: Integer;
 begin
@@ -655,6 +826,7 @@ begin
 
   FGroupID:=-1;
   UnitFacing:=0;
+
 end;
 
 procedure TUnit.Initialize(const AUnitsOnMap: TUnitsOnMap;
@@ -703,6 +875,7 @@ begin
   Speed:= IfThen(Heavy, 40, 60); //pixels per second 256 pixels to cross a hex
 
   Initialize(AUnitsOnMap, AKind, AnAttack, AnDefense, AUnits);
+  Fid:= AUnitsOnMap.GetNextId;
 end;
 
 function TUnit.IsInGroup: Boolean;
@@ -790,6 +963,7 @@ begin
     Vector2TTile(TilePosition),
     Vector2TTile(BattleWith.TilePosition)
   ) + 1 ; //difference is 0-3 we trabslate to 1-4
+  if FacingDiff<=0 then FacingDiff:=1;
   result := 1 /  FacingDiff;
 end;
 
@@ -802,6 +976,7 @@ begin
      //max casualties 20 every 2 secs
      attpwr := AttackPower * FacingRatio;
      defpwr := BattleWith.DefensePower * BattleWith.FacingRatio;
+     if defpwr=0 then defpwr:=0.01;
      BattleWith.Casualties := BattleWith.Casualties + Round(20 * (attpwr/defpwr));
   end;
 end;
@@ -849,7 +1024,7 @@ begin
    if not Result then
       TextLife.Caption := IntToStr(FUnits)
    else
-      Self.Destroy;
+     free;
 end;
 
 function TUnit.OnBattle:boolean;
@@ -893,9 +1068,16 @@ begin
   PlaceOnMap;
 end;
 
+//Is Tile Occupied by us
+function TUnit.TileOccupied(Tile: TVector2Integer): boolean;
+begin
+  result := TVector2Integer.Equals(TilePosition,Tile) or TVector2Integer.Equals(FTargetTile,Tile);
+end;
+
 function TUnit.ToString: String;
 begin
-  Result := Format('%s (Attack:%d, Defense:%d, Units:%d)', [
+  Result := Format('%d %s (Attack:%d, Defense:%d, Units:%d)', [
+    Id,
     SEnding(GetEnumName(TypeInfo(TUnitKind), Ord(Kind)), 3),
     Attack,
     Defense,
@@ -905,24 +1087,10 @@ end;
 
 
 function TUnit.CanMove(const NewTilePosition: TVector2Integer): Boolean;
-const
-  { Both true and false work OK, change to determine
-    whether you can move/attack along diagonals. }
-  CornersAreNeighbors = true;
-var
-  UnitOnNewPosition: TUnit;
 begin
   Result :=
     (UnitsOnMap <> nil)  and
-    not UnitsOnMap.IsWater(NewTilePosition);
-  exit;
-  // cannot move over a unit of the same side
-  if Result then
-  begin
-    UnitOnNewPosition := UnitsOnMap[NewTilePosition];
-    if (UnitOnNewPosition <> nil) and (UnitOnNewPosition.Human = Human) then
-      Exit(false);
-  end;
+    not UnitsOnMap.TileIsBlocked(NewTilePosition);
 end;
 
 procedure TUnit.Notification(AComponent: TComponent; Operation: TOperation);
@@ -937,13 +1105,11 @@ begin
    EnemyPosition:=BattleWith.TilePosition;
    BattleWith:=nil;  //Our Enemy is gone
    checkBattleNearTile; //Find Another
-   if not OnBattle then
-   begin
-      TargetTile:=EnemyPosition;
-   end
-   else
    if not OnBattle and HasMovement then
-    PathReached;  //continue moving
+    PathReached  //continue moving
+   else
+   if not OnBattle then
+      TargetTile:=EnemyPosition;
   End;
 end;
 
@@ -990,13 +1156,12 @@ var un: TUnit;
     Var AdjTiles: TTileArray;
         i:Integer;
     begin
-      if dist=3 then exit(False); //up to distance 3
+      if dist>=3 then exit(False); //up to distance 3
 
       AdjTiles:=TPathfinder.GetHexAdjTiles(Tile(Pos.X,pos.Y));
       for i := 0 to High(AdjTiles) do
       begin
-        if (FUnitsOnMap.UnitsOnTile(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y)).count=0) and
-            not FUnitsOnMap.isWater(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y))  then
+        if not FUnitsOnMap.TileIsBlocked(Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y)) then
         begin
           NewPos:=Vector2Integer(AdjTiles[i].X,AdjTiles[i].Y);
           Exit(True);
@@ -1012,14 +1177,14 @@ var un: TUnit;
     end;
 
     procedure MoveToNewPos;
-    Var pathf : TPathfinder;
-
     Begin
-       pathf := TPathfinder.Create(TilePosition.X,TilePosition.Y, NewPos.X, NewPos.Y);
-       pathf.OnIsTilePassable := UnitsOnMap.IsTilePassable;
-       pathf.OnGetSpeed := UnitsOnMap.GetUnitSpeed;
-       MovingPath := pathf.FindPath;  //list of ttile Records
-       pathf.free;
+       if not TVector2Integer.Equals(TilePosition,Newpos) and not assigned(MovingPath) then
+         MovingPath:=UnitsOnMap.FindAPath(TilePosition,NewPos)
+       else
+       Begin
+         MovingPath:=Nil;
+         TargetTile:=TilePosition;
+       End;
     End;
 
 var mving:boolean;
@@ -1041,20 +1206,11 @@ begin
       end;
    end;
    if mving then exit;  //all unit are moving so exit
-   
 
-   //find a position near
-   for un in FUnitsonMap.UnitsOnTile(tileposition) do
-   begin
-     if un=self then
-     begin
-       if findposnear(TilePosition,1)  then
-          MoveToNewPos
-       else
-         OutputDebugString('Can not find empty position!!!');
-       break;
-     end;
-   end;
+   if findposnear(TilePosition,1)  then
+      MoveToNewPos
+   else
+      OutputDebugString('Can not find empty position!!!');
 end;
 
 function TUnit.HasMovement:boolean;
@@ -1064,24 +1220,41 @@ end;
 
 function TUnit.IsMoving:boolean;//if onbattle no movement
 begin
- result := not OnBattle and not TVector2Integer.equals(TargetTile,TilePosition);
+ result := not OnBattle and (not TVector2Integer.equals(TargetTile,TilePosition) or assigned(MovingPath));
 end;
 
 function TUnit.IsOtherUnitHere:Boolean;
+var ulist:TUnitList;
 begin
-   result:=UnitsOnMap.UnitsOnTile(TilePosition).Count>1;
+   ulist:=UnitsOnMap.UnitsOnTile(TilePosition);
+   result:=assigned(ulist) and (ulist.Count>1);
 end;
 
 //Current waypoint reached
 procedure TUnit.PathReached;
 var tile:TTile;
     UnOnTarg:tunit;
+    tilelist:tList;
+    unfac:integer;
+
+    Procedure DoEndMovement;
+    begin
+       TargetTile:=TilePosition;
+       checkValidTile;
+       checkBattleNearTile;
+       ClearMovingPath;
+    end;
+
 begin
    if Assigned(MovingPath) and (MovingPath.Count>0) then //next tile on path
    begin
+    try
      tile:=PathfinderUnit.TTile(MovingPath.Items[MovingPath.Count-1]^);
+    except
+       MovingPath:=nil;
+    end;
      UnOnTarg:=UnitsOnMap.Items[Vector2Integer(tile.X,tile.Y)];
-     //check if other unit of ours occupy this tile
+     //check if other unit not ours occupy this tile
      if (UnOnTarg<>nil) and (UnOnTarg.Human<>Human) then
      begin
        if not IsOtherUnitHere then //do Battle
@@ -1090,34 +1263,80 @@ begin
          FTargetTile := TilePosition; //no Movement
        end
        else
-        checkValidTile; //move to a new tile
+        checkValidTile; //move to a new tile?
      end
-     else
+     else //no unit on target tile
      begin
-       TargetTile:= Vector2Integer(tile.X,tile.Y);
-       MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
-       UnitFacing := getFacingToTarget;
+       if CanMove(TTile2Vector(tile)) then
+       begin
+         TargetTile:= Vector2Integer(tile.X,tile.Y);
+         MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
+       end
+       else
+       begin
+          //no move someone occupies or will occupy the tile
+          //find another path or stop and wait if in group
+          if GroupID<>-1 then //on group
+            exit;
+          tile:=Vector2TTile(PathTarget);//final target tile
+          ClearMovingPath;
+          //save unitfacingsave
+          unfac:=FUnitFacingSave;
+          MovingPath:=Unitsonmap.FindAPath(TilePosition,TTile2Vector(tile)); //MovingPath autosaves facing
+          FUnitFacingSave:=unfac;
+          if assigned(MovingPath) then  //new path
+          Begin
+            tile:=PathfinderUnit.TTile(MovingPath.Items[MovingPath.Count-1]^);//next tile
+            MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
+            TargetTile:= Vector2Integer(tile.X,tile.Y);
+          End
+          else //no path to the target stop
+          begin
+            DoEndMovement;
+          end;
+       end;
      end;
    end
-   else
-    if Assigned(MovingPath) then  //Moving at path ended
-    begin
-      freeandnil(Movingpath);
-      UnitFacing:= FUnitFacingSave;  //restore facing
-      checkValidTile;
-      checkBattleNearTile;
-    end;
+   else //no moving path
+   begin
+    DoEndMovement;
+   end;
 
 end;
 
+procedure TUnit.ClearMovingPath;
+begin
+ try
+ if assigned(fMovingPath) then
+   freeandnil(fMovingPath);
+ except
+   fMovingPath:=nil;
+ end;
+
+ fMovingPath:=nil;
+end;
+
 procedure TUnit.SetMovingPath(const Value: TList);
+var tile:TTile;
 begin
   FMovingPath := Value;
   if assigned(Value) then
   begin
+   if MovingPath.Count=0 then
+      ClearMovingPath
+   else
+   begin
+    tile:= ttile(MovingPath.Items[MovingPath.Count-1]^);
     MovingPath.Remove(MovingPath.Items[MovingPath.Count-1]);
     FUnitFacingSave := UnitFacing; //save starting facing
-    PathReached;
+    if MovingPath.Count=0 then
+    begin
+      ClearMovingPath;
+      TargetTile:=TTile2Vector(tile);
+    end
+     else TargetTile:=TTile2Vector(ttile(MovingPath.Items[MovingPath.Count-1]^));
+    //PathReached;
+   end;
   end;
 end;
 
@@ -1154,6 +1373,9 @@ end;
 procedure TUnit.SetTargetTile(const Value: TVector2Integer);
 begin
   FTargetTile := Value;
+  if not TVector2Integer.Equals(FTargetTile,TilePosition) then
+   UnitFacing := getFacingToTarget
+  else UnitFacing := FUnitFacingSave;//restore original facing
 end;
 
 procedure TUnit.SetUnitFacing(const Value: Integer);

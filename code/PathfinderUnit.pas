@@ -71,7 +71,8 @@ type
     class function GetHexAdjTiles(Pos: TTile): TTileArray; static;
     class function HexFacingDifference(UnitFacing: Integer; UnitTilePos,
       EnemyTilePos: TTile): Integer; static;
-    constructor Create(aStartX, aStartY, aEndX, aEndY: Integer);
+    constructor Create(aStartX, aStartY, aEndX, aEndY: Integer);Overload;
+    constructor Create(StartTile, EndTile: TTile);OverLoad;
     function FindPath: TList;
   end;
 
@@ -115,6 +116,12 @@ begin
   FEnd.X := aEndX;
   FEnd.Y := aEndY;
 end;
+
+constructor TPathfinder.Create(StartTile, EndTile: TTile);
+begin
+  Create(StartTile.X,StartTile.Y,EndTile.X,EndTile.Y);
+end;
+
 
 function Vector3Integer(X, Y, Z: Integer): TCubeCoord;
 begin
